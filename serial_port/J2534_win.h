@@ -15,7 +15,7 @@
 
 #include "J2534_tactrix_win.h"
 
-#define PTfn(name) PF_##name* pf##name
+#define PTfn(name) PF_##name* pf##name = nullptr
 #define PText(name) PT_API PF_##name name
 
 #define DBGPRINT(args_in_parens)                                \
@@ -81,10 +81,11 @@ private:
     void dump_sbyte_array(const SBYTE_ARRAY* s);
     void dump_sconfig_param(SCONFIG s);
 
-    char lastError[256];
+    char lastError[256] = {};
     char dllName[256];
     bool debugMode;
     bool isLibraryInitialized;
+    bool dllNameValid = true;
 
 
 #if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)

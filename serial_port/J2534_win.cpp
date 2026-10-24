@@ -24,7 +24,15 @@ J2534::J2534()
 
 void J2534::setDllName(const char* name)
 {
-    strcpy(dllName,name);
+    disable();
+    dllNameValid = name && strlen(name) < sizeof(dllName) && name[0];
+    if (!dllNameValid)
+    {
+        dllName[0] = '\0';
+        strcpy(lastError, "J2534 DLL path is empty or exceeds 255 bytes");
+        return;
+    }
+    strcpy(dllName, name);
 }
 
 void J2534::getDllName(char* name)
@@ -34,11 +42,33 @@ void J2534::getDllName(char* name)
 
 void J2534::disable()
 {
+#if !defined(OP20PT32_USE_LIB)
     if (hDLL)
     {
+#if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)
         FreeLibrary(hDLL);
-        hDLL=NULL;
+#else
+        dlclose(hDLL);
+#endif
     }
+#endif
+    hDLL = NULL;
+    J2534_init_ok = false;
+    isLibraryInitialized = false;
+    pfPassThruOpen = nullptr;
+    pfPassThruClose = nullptr;
+    pfPassThruConnect = nullptr;
+    pfPassThruDisconnect = nullptr;
+    pfPassThruReadMsgs = nullptr;
+    pfPassThruWriteMsgs = nullptr;
+    pfPassThruStartPeriodicMsg = nullptr;
+    pfPassThruStopPeriodicMsg = nullptr;
+    pfPassThruStartMsgFilter = nullptr;
+    pfPassThruStopMsgFilter = nullptr;
+    pfPassThruSetProgrammingVoltage = nullptr;
+    pfPassThruReadVersion = nullptr;
+    pfPassThruGetLastError = nullptr;
+    pfPassThruIoctl = nullptr;
 }
 
 char* J2534::getLastError()
@@ -53,26 +83,14 @@ bool J2534::valid()
 
 J2534::~J2534()
 {
-#if defined(OP20PT32_USE_LIB)
-//	if (hDLL)
-//		::OP20PT32_Stop();
-//#else
-
-#if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)
-    if (hDLL)
-        FreeLibrary(hDLL);
-#else
-    if (hDLL)
-        dlclose(hDLL);
-#endif
-#endif
+    disable();
 }
 
 #if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)
 #if defined(OP20PT32_USE_LIB)
     #define getPTfn(name) pf##name = ::name;
 #else
-    #define getPTfn(name) if (!(pf##name = (PF_##name*)GetProcAddress(hDLL,"" #name))) return false
+    #define getPTfn(name) if (!(pf##name = (PF_##name*)GetProcAddress(hDLL,"" #name))) { snprintf(lastError, sizeof(lastError), "Missing J2534 export: %s", #name); return false; }
 #endif
 #else
 #if defined(OP20PT32_USE_LIB)
@@ -116,7 +134,7 @@ void J2534::dbgprint(const char* Format, ...)
 
     va_start(arglist, Format);
 
-    cb = vsprintf(pbuf, Format, arglist);
+    cb = vsnprintf(pbuf, sizeof(buffer), Format, arglist);
 
     if (cb == -1)
     {
@@ -194,21 +212,18 @@ long J2534::LoadJ2534DLL(const char* szDLL)
         return(1);
     }
 
-    FreeLibrary(hDLL);
-    hDLL = NULL;
+    disable();
 
 #if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)
     if (!(hDLL = LoadLibraryA(szDLL)))
     {
-        strcpy(lastError,"error loading J2534 DLL");
+        snprintf(lastError, sizeof(lastError), "Error loading J2534 DLL (Windows error %lu)", GetLastError());
         return false;
     }
     else if (!getPTfns())
     {
         // assume unusable if we don't have everything we need
-        FreeLibrary(hDLL);
-        hDLL = NULL;
-        strcpy(lastError,"error loading J2534 DLL function pointers");
+        disable();
         return false;
     }
 #else
@@ -257,6 +272,8 @@ long J2534::LoadJ2534DLL(const char* szDLL)
 
 bool J2534::checkDLL()
 {
+    if (!dllNameValid)
+        return false;
     if (!hDLL)
         LoadJ2534DLL(dllName);
     return (hDLL != NULL);
@@ -411,7 +428,7 @@ long J2534::PassThruReadVersion(char *pApiVersion,char *pDllVersion,char *pFirmw
         return ERR_DEVICE_NOT_CONNECTED;
     DBGPRINT(("PassThruReadVersion(DeviceID=%u,pFirmwareVersion=@%08X,pDllVersion=@%08X,pApiVersion=@%08X)\n",DeviceID,pFirmwareVersion,pDllVersion,pApiVersion));
     result = (*pfPassThruReadVersion)(DeviceID,pFirmwareVersion,pDllVersion,pApiVersion);
-    DBGPRINT(("PassThruReadVersion returned result %d and FirmwareVersion [%s], DllVersion [%s], ApiVersion [%s]\n",result,pFirmwareVersion,pDllVersion,pApiVersion));
+    DBGPRINT(("PassThruReadVersion returned result %d and FirmwareVersion [%.79s], DllVersion [%.79s], ApiVersion [%.79s]\n",result,pFirmwareVersion,pDllVersion,pApiVersion));
     return result;
 }
 
@@ -422,7 +439,7 @@ long J2534::PassThruGetLastError(char *pErrorDescription)
         return ERR_DEVICE_NOT_CONNECTED;
     DBGPRINT(("PassThruGetLastError(pErrorDescription=@%08X\n",pErrorDescription));
     result = (*pfPassThruGetLastError)(pErrorDescription);
-    DBGPRINT(("PassThruGetLastError returned result %d and ErrorDescription [%s]\n",result,pErrorDescription));
+    DBGPRINT(("PassThruGetLastError returned result %d and ErrorDescription [%.79s]\n",result,pErrorDescription));
     return result;
 }
 

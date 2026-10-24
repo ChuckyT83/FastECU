@@ -152,6 +152,7 @@ public:
     bool get_is_tx_done();
 
 private:
+    friend class J2534ReliabilityTest;
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(A) (sizeof(A)/sizeof((A)[0]))
 #endif
@@ -203,17 +204,18 @@ private:
 
     unsigned int baudrate = 4800;
     unsigned long devID = 0;
-    unsigned long chanID;
-    unsigned long flags;
+    unsigned long chanID = 0;
+    unsigned long flags = 0;
     unsigned int parity = NO_PARITY;
     unsigned int timeout = 20;
 
     bool ssm_init_ok = false;
 
     void close_j2534_serial_port();
-    bool get_serial_num(char* serial);
+    bool get_serial_num(char* serial, size_t capacity);
     void dump_msg(PASSTHRU_MSG* msg);
-    void reportJ2534Error();
+    void reportJ2534Error(long status = -1, const char *operation = nullptr);
+    bool checkJ2534Status(long status, const char *operation);
 
 #if defined Q_OS_UNIX
     unsigned int protocol = ISO9141;
