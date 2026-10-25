@@ -151,8 +151,13 @@ public:
 
     bool get_is_tx_done();
 
+    enum class TransportState { Idle, Success, NoMessage, Partial, Error };
+    TransportState transport_state() const { return transportState; }
+    long transport_status() const { return transportStatus; }
+
 private:
     friend class J2534ReliabilityTest;
+    friend class J2534TransportTest;
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(A) (sizeof(A)/sizeof((A)[0]))
 #endif
@@ -184,6 +189,11 @@ private:
     int set_j2534_iso9141_timings();
 
     unsigned long msgID = 0;
+    bool periodicActive = false;
+    TransportState transportState = TransportState::Idle;
+    long transportStatus = STATUS_NOERROR;
+    int transport_failure(long status, const char *operation);
+    bool valid_message_size(int size) const;
 
     enum rx_msg_type {
         NORM_MSG,
@@ -246,7 +256,9 @@ private:
     QString parse_message_to_hex(QByteArray received);
 
 #ifdef WIN32
+    static QSettings::Format driver_registry_format();
     QMap<QString, QString> getAllJ2534DriversNames();
+    QMap<QString, QString> read_j2534_registry(QSettings &registry);
 #endif
     QStringList check_j2534_devices(QMap<QString, QString> installed_drivers);
 

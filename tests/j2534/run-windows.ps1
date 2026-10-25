@@ -44,10 +44,21 @@ try {
     Invoke-Logged -Name 'build-initialization-tests' -File 'nmake.exe' -Arguments @('/NOLOGO')
     $env:QT_QPA_PLATFORM = 'offscreen'
     Invoke-Logged -Name 'initialization-tests' -File (Join-Path $build 'j2534-windows-reliability.exe') -Arguments @('-o', "$(Join-Path $logs 'initialization-results.txt'),txt", '-o', "$(Join-Path $logs 'initialization-results.xml'),junitxml", '-o', '-,txt')
+    $transportBuild = Join-Path $build 'transport'
+    New-Item -ItemType Directory -Force $transportBuild | Out-Null
+    Copy-Item (Join-Path $build 'mock-j2534.dll') $transportBuild -Force
+    Push-Location $transportBuild
+    try {
+        Invoke-Logged -Name 'qmake-transport' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/j2534/transport.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-transport' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'transport-tests' -File (Join-Path $transportBuild 'j2534-transport.exe') -Arguments @('-o', "$(Join-Path $logs 'transport-results.txt'),txt", '-o', "$(Join-Path $logs 'transport-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
-        (Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:')
+        ('Initialization: ' + ((Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
+        ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
     ) -join '; '
     Write-Output "::notice title=Native Windows J2534 results::$evidence"

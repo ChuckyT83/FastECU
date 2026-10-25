@@ -7,6 +7,7 @@
 #else
 #define EXPORT extern "C" __attribute__((visibility("default")))
 #endif
+#include "mock_transport.inc"
 static unsigned long device = 41;
 static unsigned long channel = 99;
 static long failure = 0;
@@ -17,7 +18,7 @@ static long record(const char *op, unsigned long id) {
     trace += std::string(op) + ":" + std::to_string(id) + ";";
     return failingOperation == op ? ERR_FAILED : failure;
 }
-EXPORT void PT_CALL MockReset() { failure = 0; failingOperation.clear(); trace.clear(); metadata = 0; device = 41; channel = 99; }
+EXPORT void PT_CALL MockReset() { failure = 0; failingOperation.clear(); trace.clear(); metadata = 0; device = 41; channel = 99; MockTransportReset(); }
 EXPORT void PT_CALL MockSetFailure(const char *op) { failingOperation = op; }
 EXPORT void PT_CALL MockSetHandles(unsigned long d, unsigned long c) { device = d; channel = c; }
 EXPORT void PT_CALL MockSetMetadata(int mode) { metadata = mode; }
@@ -27,13 +28,13 @@ EXPORT long PT_CALL PassThruOpen(const void*, unsigned long *id) { *id = device;
 EXPORT long PT_CALL PassThruClose(unsigned long id) { return id == device ? record("close", id) : ERR_INVALID_DEVICE_ID; }
 EXPORT long PT_CALL PassThruConnect(unsigned long id, unsigned long, unsigned long, unsigned long, unsigned long *out) { *out = channel; return id == device ? record("connect", id) : ERR_INVALID_DEVICE_ID; }
 EXPORT long PT_CALL PassThruDisconnect(unsigned long id) { return id == channel ? record("disconnect", id) : ERR_INVALID_CHANNEL_ID; }
-EXPORT long PT_CALL PassThruReadMsgs(unsigned long, void*, unsigned long*, unsigned long) { return 0; }
-EXPORT long PT_CALL PassThruWriteMsgs(unsigned long, const void*, unsigned long*, unsigned long) { return 0; }
-EXPORT long PT_CALL PassThruStartPeriodicMsg(unsigned long, const void*, unsigned long*, unsigned long) { return 0; }
-EXPORT long PT_CALL PassThruStopPeriodicMsg(unsigned long, unsigned long) { return 0; }
+EXPORT long PT_CALL PassThruReadMsgs(unsigned long c, void* m, unsigned long* n, unsigned long t) { return mockRead(c,m,n,t); }
+EXPORT long PT_CALL PassThruWriteMsgs(unsigned long c, const void* m, unsigned long* n, unsigned long t) { return mockWrite(c,m,n,t); }
+EXPORT long PT_CALL PassThruStartPeriodicMsg(unsigned long c, const void*, unsigned long* id, unsigned long) { return mockPeriodic(c,id); }
+EXPORT long PT_CALL PassThruStopPeriodicMsg(unsigned long c, unsigned long) { return mockStop(c); }
 EXPORT long PT_CALL PassThruStartMsgFilter(unsigned long id, unsigned long, const void*, const void*, const void*, unsigned long *filter) { *filter = 9; return record("filter", id); }
 EXPORT long PT_CALL PassThruStopMsgFilter(unsigned long, unsigned long) { return 0; }
-EXPORT long PT_CALL PassThruSetProgrammingVoltage(unsigned long, unsigned long, unsigned long) { return 0; }
+EXPORT long PT_CALL PassThruSetProgrammingVoltage(unsigned long d, unsigned long, unsigned long) { return mockVoltage(d); }
 EXPORT long PT_CALL PassThruReadVersion(unsigned long id, char *fw, char *dll, char *api) {
     if (id != device) return ERR_INVALID_DEVICE_ID;
     long status = record("version", id);
@@ -49,7 +50,8 @@ EXPORT long PT_CALL PassThruReadVersion(unsigned long id, char *fw, char *dll, c
 }
 EXPORT long PT_CALL PassThruGetLastError(char *text) { strcpy(text, "mock failure"); return 0; }
 #ifndef OMIT_IOCTL
-EXPORT long PT_CALL PassThruIoctl(unsigned long id, unsigned long op, const void*, void*) {
-    return record(op == SET_CONFIG ? "config" : op == CLEAR_MSG_FILTERS ? "clearFilters" : "ioctl", id);
+EXPORT long PT_CALL PassThruIoctl(unsigned long id, unsigned long op, const void*, void* out) {
+    const long result = record(op == SET_CONFIG ? "config" : op == CLEAR_MSG_FILTERS ? "clearFilters" : "ioctl", id);
+    return result ? result : mockIoctl(id, op, out);
 }
 #endif

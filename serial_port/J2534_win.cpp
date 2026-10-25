@@ -170,14 +170,14 @@ void J2534::dbgdump(const unsigned char *data,unsigned int datalen,int kind)
         *pbuf++ = ' ';
     }
 
-    for (i = 0; i < datalen; i++)
+    for (i = 0; i < datalen && size_t(pbuf - buf) + 12 < sizeof(buf); i++)
     {
         if (i > 15 && (i & 0xF) == 0)
             pbuf += sprintf(pbuf,"\n   ");
         pbuf += sprintf(pbuf,"%02X ",data[i]);
     }
     pbuf += sprintf(pbuf,"\n");
-    dbgprint(buf);
+    dbgprint("%s", buf);
 }
 
 
@@ -189,7 +189,8 @@ void J2534::dbgprintptmsg(const PASSTHRU_MSG *pMsg,int kind)
         return;
     }
     dbgprint("ProtocolID=%u,RxStatus=%u,TxFlags=%u,Timestamp=%u,DataSize=%u,ExtraDataIndex=%u\n",pMsg->ProtocolID,pMsg->RxStatus,pMsg->TxFlags,pMsg->Timestamp,pMsg->DataSize,pMsg->ExtraDataIndex);
-    dbgdump(pMsg->Data,pMsg->DataSize,kind);
+    if (pMsg->DataSize <= PASSTHRU_MSG_DATA_SIZE)
+        dbgdump(pMsg->Data,pMsg->DataSize,kind);
 }
 
 long J2534::LoadJ2534DLL(const char* szDLL)
@@ -217,7 +218,7 @@ long J2534::LoadJ2534DLL(const char* szDLL)
 #if defined(_WIN32) || defined(WIN32) || defined (_WIN64) || defined (WIN64)
     if (!(hDLL = LoadLibraryA(szDLL)))
     {
-        snprintf(lastError, sizeof(lastError), "Error loading J2534 DLL (Windows error %lu)", GetLastError());
+        snprintf(lastError, sizeof(lastError), "Error loading J2534 DLL (Windows error %lu; process %u-bit, check DLL architecture/dependencies)", GetLastError(), unsigned(sizeof(void*) * 8));
         return false;
     }
     else if (!getPTfns())
@@ -346,10 +347,15 @@ long J2534::PassThruWriteMsgs(unsigned long ChannelID, const PASSTHRU_MSG *pMsg,
 {
     unsigned int i;
     long result = STATUS_NOERROR;
+    if (!pMsg || !pNumMsgs || *pNumMsgs == 0)
+        return ERR_NULL_PARAMETER;
+    const unsigned long requested = *pNumMsgs;
     if (!checkDLL())
         return ERR_DEVICE_NOT_CONNECTED;
     DBGPRINT(("PassThruWriteMsgs(ChannelID=%u,pMsg=@%08X,NumMsgs=%u,Timeout=%u)\n",ChannelID,pMsg,*pNumMsgs,Timeout));
     result = (*pfPassThruWriteMsgs)(ChannelID,pMsg,pNumMsgs,Timeout);
+    if (*pNumMsgs > requested)
+        return ERR_INVALID_MSG;
     for (i = 0; i < *pNumMsgs; i++)
         DBGPRINTPT((&(pMsg[i]),MSG_WRITE));
     DBGPRINT(("PassThruWriteMsgs returned result %d\n",result));

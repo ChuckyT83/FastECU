@@ -16,6 +16,9 @@ static bool moduleLoaded(const char *path) {
 }
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #condition); return 1; } ++checks; } while (0)
 int main(int argc, char **argv) {
+#if defined(_WIN32)
+    static_assert(sizeof(unsigned long)==4 && sizeof(long)==4 && sizeof(void*)==8, "Native J2534 tests require Windows x64 LLP64");
+#endif
     if (argc != 3) return 2;
     int checks = 0;
     J2534 driver;

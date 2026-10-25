@@ -2,7 +2,7 @@ name: Offline Windows J2534 regression
 
 on:
   push:
-    branches: [fix/j2534-initialization-reliability]
+    branches: [fix/j2534-initialization-reliability, fix/j2534-transport-reliability]
     paths:
       - '.github/workflows/j2534-windows.yml'
       - 'tests/j2534/**'
