@@ -17,7 +17,11 @@ function Invoke-Logged {
     if ($code -ne 0) {
         # Compiler/test output contains no credentials. Keep the diagnostic tail
         # in a public annotation as well as the downloadable artifact.
-        $tail = (Get-Content (Join-Path $logs "$Name.log") -Tail 60) -join "`n"
+        $content = Get-Content (Join-Path $logs "$Name.log")
+        $diagnostics = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception' } | Select-Object -Last 20
+        if (-not $diagnostics) { $diagnostics = $content | Where-Object { $_.Length -lt 500 } | Select-Object -Last 12 }
+        $tail = $diagnostics -join "`n"
+        if ($tail.Length -gt 3500) { $tail = $tail.Substring($tail.Length - 3500) }
         $escaped = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
         Write-Output "::error title=$Name (exit $code)::$escaped"
         throw "$Name failed with exit code $code"
