@@ -18,9 +18,9 @@ function Invoke-Logged {
         # Compiler/test output contains no credentials. Keep the diagnostic tail
         # in a public annotation as well as the downloadable artifact.
         $content = Get-Content (Join-Path $logs "$Name.log")
-        $diagnostics = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception' } | Select-Object -Last 20
+        $diagnostics = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception|PASS|INFO.*entering' } | Select-Object -Last 20
         if (-not $diagnostics) { $diagnostics = $content | Where-Object { $_.Length -lt 500 } | Select-Object -Last 12 }
-        $tail = $diagnostics -join "`n"
+        $tail = $Name + "`n" + ($diagnostics -join "`n")
         if ($tail.Length -gt 3500) { $tail = $tail.Substring($tail.Length - 3500) }
         $escaped = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
         Write-Output "::error title=$Name (exit $code)::$escaped"
@@ -59,7 +59,7 @@ try {
     try {
         Invoke-Logged -Name 'qmake-subaru' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/safety.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
         Invoke-Logged -Name 'build-subaru' -File 'nmake.exe' -Arguments @('/NOLOGO')
-        Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
+        Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-v1', '-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
