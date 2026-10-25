@@ -186,6 +186,11 @@ private slots:
         QCOMPARE(module->reflash_block(reinterpret_cast<const uint8_t*>(cal.FullRomData.constData()),&bad,0,false),1);
         QVERIFY(port.writes.isEmpty());
     }
+    void definitionDefaults() {
+        FileActions::EcuCalDefStructure fresh;
+        QVERIFY(!fresh.use_romraider_definition); QVERIFY(!fresh.use_ecuflash_definition);
+        QVERIFY(fresh.Sh7058PreparedImageHash.isEmpty());
+    }
     void protocolRoutes() {
         for (const char *name : {"sub_ecu_denso_sh7058_can", "sub_ecu_denso_sh7058_can_ecutek",
                 "sub_ecu_denso_sh7058_can_ecutek_racerom", "sub_ecu_denso_sh7058_can_ecutek_racerom_alt",

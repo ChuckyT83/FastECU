@@ -336,8 +336,8 @@ public:
         QByteArray Sh7058PreparedImageHash;
         bool OemEcuFile;
         bool SyncedWithEcu;
-        bool use_romraider_definition;
-        bool use_ecuflash_definition;
+        bool use_romraider_definition = false;
+        bool use_ecuflash_definition = false;
 
         QStringList RomInfoStrings = {
             "XML ID",
