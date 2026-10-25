@@ -122,6 +122,7 @@ private slots:
         }); timer.start(1);
         module->run();
         QVERIFY(!outcome.isEmpty());
+        QCOMPARE(module->operation_result(),failure ? 1 : mismatches ? 2 : 0);
         QCOMPARE(outcome.contains("was succesful"),mismatches==0 && !failure);
         if(mismatches) QVERIFY(outcome.contains("Verification failed"));
         if(failure) QVERIFY(outcome.contains("operation failed"));
@@ -440,7 +441,7 @@ private slots:
         QVERIFY(!module->submit(diagnosticRequest(QByteArray::fromHex("aa"))));
         QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
         QTimer timer; connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) b->accept();}); timer.start(1);
-        module->run(); QCOMPARE(port.setupCalls,0); QVERIFY(port.writes.isEmpty()); QCOMPARE(port.checkedReads,0);
+        module->run(); QCOMPARE(module->operation_result(),1); QCOMPARE(port.setupCalls,0); QVERIFY(port.writes.isEmpty()); QCOMPARE(port.checkedReads,0);
     }
     void parserFrames_data() {
         QTest::addColumn<QByteArray>("request"); QTest::addColumn<QByteArray>("response"); QTest::addColumn<int>("expected");
@@ -540,7 +541,7 @@ private slots:
             if(b->windowTitle()=="ECU Operation") outcome=b->text();
             b->button(QMessageBox::Ok)->click();
         }}); timer.start(1);
-        module->run(); QVERIFY(outcome.contains("operation failed")); QVERIFY(!outcome.contains("was succesful"));
+        module->run(); QCOMPARE(module->operation_result(),1); QVERIFY(outcome.contains("operation failed")); QVERIFY(!outcome.contains("was succesful"));
         QCOMPARE(commands().count(SUB_KERNEL_WRITE_FLASH_BUFFER),0);
     }
     void malformedDiagnosticStops_data() { QTest::addColumn<int>("stage"); for(int i=1;i<10;++i) QTest::newRow(qPrintable(QString::number(i)))<<i; }

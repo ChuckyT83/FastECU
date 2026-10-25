@@ -36,6 +36,8 @@ public:
     ~FlashEcuSubaruDensoSH7058Can();
 
     void run();
+    // Host operation outcome; does not prove the ECU state after a failure.
+    int operation_result() const { return operationResult; }
 
 signals:
     void external_logger(QString message);
@@ -75,6 +77,7 @@ private:
     bool request_denso_kernel_id = false;
     bool flash_write_init = false;
 
+    int operationResult = STATUS_ERROR;
     int result;
     int mcu_type_index = -1;
     int bootloader_start_countdown = 3;

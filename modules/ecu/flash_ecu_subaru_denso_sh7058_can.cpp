@@ -151,6 +151,7 @@ bool FlashEcuSubaruDensoSH7058Can::valid_image() const
 
 void FlashEcuSubaruDensoSH7058Can::run()
 {
+    operationResult = STATUS_ERROR;
     this->show();
 
     int result = STATUS_ERROR;
@@ -174,7 +175,7 @@ void FlashEcuSubaruDensoSH7058Can::run()
             "Programming blocked: expected a validated 1,048,576-byte SH7058 image and successful checksum preparation.");
         return;
     }
-    if (kill_process) return;
+    if (kill_process) { operationResult = STATUS_CANCELLED; return; }
     QString mcu_name = flashdevices[mcu_type_index].name;
     emit LOG_D("MCU type: " + mcu_name + " " + mcu_type_string + " and index: " + QString::number(mcu_type_index), true, true);
 
@@ -254,6 +255,8 @@ void FlashEcuSubaruDensoSH7058Can::run()
             }
             if (kill_process) result = STATUS_CANCELLED;
             emit external_logger(operation_succeeded(result) ? "Finished" : "Failed or cancelled");
+            if (kill_process) result = STATUS_CANCELLED;
+            operationResult = result;
 
             if (operation_succeeded(result))
             {
@@ -269,6 +272,7 @@ void FlashEcuSubaruDensoSH7058Can::run()
 
             break;
         case QMessageBox::Cancel:
+            operationResult = STATUS_CANCELLED;
             emit LOG_D("Operation canceled", true, true);
             this->close();
             break;

@@ -990,11 +990,13 @@ int MainWindow::can_listener()
 
 int MainWindow::start_ecu_operations(QString cmd_type)
 {
+    const bool sh7058Operation = SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name);
+    int sh7058Result = 0;
     // Reject before the legacy UI prelude can make unchecked QtRO calls.
-    if (SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name) &&
+    if (sh7058Operation &&
         !serial->isDirectConnection()) {
         QMessageBox::warning(this, tr("ECU Operation"), "Remote SH7058 operations are disabled until explicit communication results are supported.");
-        return 0;
+        return sh7058Operation ? 1 : 0;
     }
     set_realtime_state(false);
     toggle_realtime();
@@ -1009,7 +1011,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
     {
         emit LOG_D("No serial port selected!", true, true);
         QMessageBox::warning(this, tr("Serial port"), "No serial port selected!");
-        return 0;
+        return sh7058Operation ? 1 : 0;
     }
 
     // Stop serial timers
@@ -1054,14 +1056,14 @@ int MainWindow::start_ecu_operations(QString cmd_type)
             else
             {
                 QMessageBox::warning(this, tr("Write ROM"), "No file selected!");
-                return 0;
+                return sh7058Operation ? 1 : 0;
             }
 
             fullRomDataTmp = ecuCalDef[rom_number]->FullRomData;
             if (SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name) &&
                 configValues->flash_protocol_selected_checksum != "yes") {
                 QMessageBox::warning(this, tr("SH7058 ROM validation"), "Programming blocked: required checksum configuration is unavailable.");
-                return 0;
+                return sh7058Operation ? 1 : 0;
             }
             if (configValues->flash_protocol_selected_checksum == "n/a")
             {
@@ -1079,7 +1081,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
                 {
                     emit LOG_D("Write canceled!", true, true);
                     ecuCalDef[rom_number]->FullRomData = fullRomDataTmp;
-                    return 0;
+                    return sh7058Operation ? 1 : 0;
                 }
             }
             if (ecuCalDef[rom_number]->RomInfo.at(fileActions->FlashMethod) == "")
@@ -1096,7 +1098,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
                 !fileActions->checksum_correction(ecuCalDef[rom_number]))
             {
                 ecuCalDef[rom_number]->FullRomData = fullRomDataTmp;
-                return 0;
+                return sh7058Operation ? 1 : 0;
             }
         }
         else
@@ -1184,6 +1186,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
         {
             FlashEcuSubaruDensoSH7058Can flash_module(serial, ecuCalDef[rom_number], cmd_type, this);
             connect_signals_and_run_module(&flash_module);
+            sh7058Result = flash_module.operation_result();
         }
         else if (configValues->flash_protocol_selected_protocol_name.startsWith("sub_ecu_denso_sh7058"))
         {
@@ -1379,7 +1382,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
 
         if (cmd_type == "read")
         {
-            if (ecuCalDef[ecuCalDefIndex]->FullRomData.length())
+            if ((!sh7058Operation || sh7058Result == 0) && ecuCalDef[ecuCalDefIndex]->FullRomData.length())
             {
                 QDateTime dateTime = dateTime.currentDateTime();
                 QString dateTimeString = dateTime.toString("yyyy-MM-dd_hh'h'mm'm'ss's'");
@@ -1420,7 +1423,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
     emit log_transport_list->currentIndexChanged(log_transport_list->currentIndex());
     serial->change_port_speed("4800");
 
-    return 0;
+    return sh7058Result;
 }
 
 void MainWindow::custom_menu_requested(QPoint pos)
