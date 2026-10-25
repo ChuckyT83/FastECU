@@ -1160,7 +1160,7 @@ int FlashEcuSubaruDensoSH7058Can::get_changed_blocks(const uint8_t *src, int *mo
 
     for (blockno = 0; blockno < flashdevices[mcu_type_index].numblocks; blockno++) {
         if (kill_process)
-            return STATUS_ERROR;
+            return STATUS_CANCELLED;
 
         uint32_t bs, blen;
         bs = flashdevices[mcu_type_index].fblocks[blockno].start;
@@ -1214,7 +1214,7 @@ int FlashEcuSubaruDensoSH7058Can::check_romcrc(const uint8_t *src, uint32_t addr
     output.append((uint8_t)(addr >> 16) & 0xFF);
     output.append((uint8_t)(addr >> 8) & 0xFF);
     output.append((uint8_t)addr & 0xFF);
-    output.append((uint8_t)0x00 & 0xFF);
+    output.append('\0');
     output.append((uint8_t)(pagesize >> 16) & 0xFF);
     output.append((uint8_t)(pagesize >> 8) & 0xFF);
     output.append((uint8_t)pagesize & 0xFF);

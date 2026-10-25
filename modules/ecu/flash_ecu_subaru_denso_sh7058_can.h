@@ -48,12 +48,12 @@ private:
     friend class SubaruSafetyTest;
     enum { STATUS_VERIFY_ERROR = 2, STATUS_CANCELLED = 3 };
     bool valid_image() const;
-    bool operation_succeeded(int status) const { return status == 0 && !kill_process; }
     FileActions::EcuCalDefStructure *ecuCalDef;
     QString cmd_type;
 
     #define STATUS_SUCCESS	0x00
     #define STATUS_ERROR	0x01
+    bool operation_succeeded(int status) const { return status == STATUS_SUCCESS && !kill_process; }
 
     #define CRC32   0x5AA5A55A
     bool crc_tab32_init = 0;

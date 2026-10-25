@@ -185,6 +185,13 @@ private slots:
         QCOMPARE(module->reflash_block(reinterpret_cast<const uint8_t*>(cal.FullRomData.constData()),&bad,0,false),1);
         QVERIFY(port.writes.isEmpty());
     }
+    void protocolRoutes() {
+        for (const char *name : {"sub_ecu_denso_sh7058_can", "sub_ecu_denso_sh7058_can_ecutek",
+                "sub_ecu_denso_sh7058_can_ecutek_racerom", "sub_ecu_denso_sh7058_can_ecutek_racerom_alt",
+                "sub_ecu_denso_sh7058_can_cobb"}) QVERIFY(SubaruSH7058Safety::usesModule(name));
+        QVERIFY(!SubaruSH7058Safety::usesModule("sub_ecu_denso_sh7058_can_diesel"));
+        QVERIFY(!SubaruSH7058Safety::usesModule("sub_ecu_denso_sh7058"));
+    }
     void sourceBounds() {
         const auto *src=reinterpret_cast<const uint8_t*>(cal.FullRomData.constData()); int modified=0;
         QCOMPARE(module->check_romcrc(src,1048575,2,&modified),1);
@@ -216,6 +223,25 @@ private slots:
             QVERIFY(!SubaruSH7058Safety::prepare(bytes,"SH7058",true,true).usable());
         }
     }
+    void preparedChecksumCorrection() {
+        auto bytes=image();
+        put32(bytes,4,1); put32(bytes,8,2);
+        for(int i=0;i<17;++i) { put32(bytes,0xFFB80+i*12,0); put32(bytes,0xFFB84+i*12,0); put32(bytes,0xFFB88+i*12,0x5AA5A55A); }
+        put32(bytes,0xFFB80,4); put32(bytes,0xFFB84,12); put32(bytes,0xFFB88,0);
+        const auto result=SubaruSH7058Safety::prepare(bytes,"SH7058",true,true);
+        QCOMPARE(int(result.state),int(C::State::Corrected));
+        auto expected=bytes; put32(expected,0xFFB88,0x5AA5A557);
+        QCOMPARE(result.image,expected); QCOMPARE(result.image.size(),1048576);
+        const auto valid=SubaruSH7058Safety::prepare(expected,"SH7058",true,true);
+        QCOMPARE(int(valid.state),int(C::State::Valid)); QCOMPARE(valid.image,expected);
+    }
+    void invalidChecksumBlocksRun() {
+        put32(cal.FullRomData,0xFFB80,4); put32(cal.FullRomData,0xFFB84,1048580); put32(cal.FullRomData,0xFFB88,0);
+        const auto prepared=SubaruSH7058Safety::prepare(cal.FullRomData,"SH7058",true,true);
+        QVERIFY(!prepared.usable()); cal.Sh7058PreparedImageHash.clear();
+        QTimer timer; connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) b->accept();}); timer.start(1);
+        module->run(); QCOMPARE(port.setupCalls,0); QVERIFY(port.writes.isEmpty());
+    }
     void legacyChecksumPreservesImage() {
         auto before=image();
         QTimer timer; connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) b->accept();}); timer.start(1);
@@ -236,19 +262,25 @@ private slots:
     }
     void cancellation_data() {
         QTest::addColumn<QString>("phase"); QTest::addColumn<bool>("testWrite");
-        for (const char *p : {"before-compare","final-compare-delay","before-init","before-erase","after-erase","during-buffer","before-commit"})
+        for (const char *p : {"before-compare","final-compare-delay","before-init","before-erase","erase-submit","before-flash-enable","after-erase","during-buffer","before-commit","commit-submit"})
             QTest::newRow(p) << QString(p) << false;
         QTest::newRow("before-validate") << QString("before-commit") << true;
+        QTest::newRow("validate-submit") << QString("commit-submit") << true;
     }
     void cancellation() {
         QFETCH(QString,phase); QFETCH(bool,testWrite); module->test_write=testWrite;
         int buffers=0; QVector<QByteArray> atCancel;
         auto observe=[&]{ cancel(); atCancel=port.writes; };
+        connect(module,&FlashEcuSubaruDensoSH7058Can::LOG_I,module,[&](QString text,bool,bool){
+            if ((phase=="erase-submit" && text=="Erasing flash page...") ||
+                (phase=="commit-submit" && (text.startsWith("Committ flash addr:") || text.startsWith("Validate flash addr:")))) observe();
+        });
         port.afterRead=[&](const QByteArray &a){
             int cmd=uint8_t(a.at(8));
             if (phase=="final-compare-delay" && cmd==SUB_KERNEL_CRC && crcRequests==16)
                 QTimer::singleShot(0,module,[&]{observe();});
-            if ((phase=="before-erase" && cmd==SUB_KERNEL_PROG_VOLT) ||
+            if ((phase=="before-flash-enable" && cmd==SUB_KERNEL_GET_MAX_BLK_SIZE) ||
+                (phase=="before-erase" && cmd==SUB_KERNEL_PROG_VOLT) ||
                 (phase=="after-erase" && cmd==SUB_KERNEL_BLANK_PAGE)) observe();
             if (cmd==SUB_KERNEL_WRITE_FLASH_BUFFER) {
                 ++buffers;
@@ -263,7 +295,7 @@ private slots:
         } else result=module->write_mem(testWrite);
         QVERIFY(module->kill_process); QVERIFY(!module->operation_succeeded(result)); QVERIFY(result!=0);
         QCOMPARE(port.writes,atCancel); // absolutely no commands after cancellation
-        if(phase=="final-compare-delay" || phase=="before-erase" || phase=="before-init" || phase=="before-compare")
+        if(phase=="final-compare-delay" || phase=="before-erase" || phase=="before-init" || phase=="before-compare" || phase=="erase-submit" || phase=="before-flash-enable")
             QCOMPARE(commands().count(SUB_KERNEL_BLANK_PAGE),0);
         QCOMPARE(commands().count(SUB_KERNEL_COMMIT_FLASH_BUFFER),0);
         QCOMPARE(commands().count(SUB_KERNEL_VALIDATE_FLASH_BUFFER),0);
@@ -279,6 +311,16 @@ private slots:
         expected<<(testWrite?SUB_KERNEL_VALIDATE_FLASH_BUFFER:SUB_KERNEL_COMMIT_FLASH_BUFFER);
         for(int i=0;i<16;++i) expected<<SUB_KERNEL_CRC;
         QCOMPARE(commands(),expected);
+        QByteArray trace;
+        for (const auto &a:port.writes) {
+            QByteArray length(4, '\0'); put32(length,0,uint32_t(a.size()));
+            trace += length; trace += a;
+        }
+        // Captured by compiling the Task 004 production module against this
+        // same fake and synthetic fixture. Covers every submitted byte/order.
+        QCOMPARE(SubaruSH7058Safety::fingerprint(trace).toHex(), QByteArray(testWrite ?
+            "a7f629163a60e21569202a7ebe6bd74a99353826ed6238b076abaca251a85703" :
+            "313959741b6a29c3182871eb3ee854976018c7c7cd8ad2231b9b0e3244788adf"));
         for(const auto &a:port.writes) {
             QCOMPARE(a.left(4),QByteArray::fromHex("000007e0"));
             if(uint8_t(a.at(8))==SUB_KERNEL_WRITE_FLASH_BUFFER) {
