@@ -332,6 +332,8 @@ public:
         QStringList MapDefined;
 
         QByteArray FullRomData;
+        // Set only after successful SH7058 preparation; invalidated by image edits.
+        QByteArray Sh7058PreparedImageHash;
         bool OemEcuFile;
         bool SyncedWithEcu;
         bool use_romraider_definition;

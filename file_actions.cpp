@@ -1,3 +1,4 @@
+#include "modules/ecu/subaru_sh7058_safety.h"
 //#include "file_actions.h"
 #include "error_codes.h"
 
@@ -2551,6 +2552,21 @@ FileActions::EcuCalDefStructure *FileActions::checksum_correction(FileActions::E
 {
     ConfigValuesStructure *configValues = &ConfigValuesStruct;
 
+    // This module must fail closed before the legacy definition/checksum bypasses.
+    if (SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name)) {
+        ecuCalDef->Sh7058PreparedImageHash.clear();
+        const auto prepared = SubaruSH7058Safety::prepare(ecuCalDef->FullRomData, ecuCalDef->McuType,
+            ecuCalDef->use_romraider_definition || ecuCalDef->use_ecuflash_definition,
+            configValues->flash_protocol_selected_checksum == "yes");
+        if (!prepared.usable() || prepared.image.size() != ecuCalDef->FullRomData.size()) {
+            QMessageBox::warning(this, tr("SH7058 ROM validation"),
+                "Programming blocked: SH7058 requires exactly 1,048,576 bytes, a supported memory map, a linked definition and valid checksum configuration. ROM preserved.");
+            return nullptr;
+        }
+        ecuCalDef->FullRomData = prepared.image;
+        ecuCalDef->Sh7058PreparedImageHash = SubaruSH7058Safety::fingerprint(prepared.image);
+        return ecuCalDef;
+    }
     bool chksumModuleAvailable = false;
 
     QString flashMethod = configValues->flash_protocol_selected_protocol_name;// ecuCalDef->RomInfo[FlashMethod];

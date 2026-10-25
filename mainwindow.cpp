@@ -1,3 +1,4 @@
+#include "modules/ecu/subaru_sh7058_safety.h"
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QSplashScreen>
@@ -1051,6 +1052,11 @@ int MainWindow::start_ecu_operations(QString cmd_type)
             }
 
             fullRomDataTmp = ecuCalDef[rom_number]->FullRomData;
+            if (SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name) &&
+                configValues->flash_protocol_selected_checksum != "yes") {
+                QMessageBox::warning(this, tr("SH7058 ROM validation"), "Programming blocked: required checksum configuration is unavailable.");
+                return 0;
+            }
             if (configValues->flash_protocol_selected_checksum == "n/a")
             {
                 QMessageBox msgBox;
@@ -1080,10 +1086,8 @@ int MainWindow::start_ecu_operations(QString cmd_type)
             ecuCalDef[rom_number]->KernelStartAddr = configValues->flash_protocol_kernel_addr.at(configValues->flash_protocol_selected_id.toInt());
             ecuCalDef[rom_number]->McuType = configValues->flash_protocol_selected_mcu;
 
-            if (configValues->flash_protocol_selected_checksum != "n/a")
-                ecuCalDef[rom_number] = fileActions->checksum_correction(ecuCalDef[rom_number]);
-
-            if (ecuCalDef[rom_number] == NULL)
+            if (configValues->flash_protocol_selected_checksum != "n/a" &&
+                !fileActions->checksum_correction(ecuCalDef[rom_number]))
             {
                 ecuCalDef[rom_number]->FullRomData = fullRomDataTmp;
                 return 0;
@@ -1487,7 +1491,8 @@ void MainWindow::save_calibration_file()
     else
         ecuCalDef[rom_number] = fileActions->checksum_correction(ecuCalDef[rom_number]);
 */
-    ecuCalDef[rom_number] = fileActions->checksum_correction(ecuCalDef[rom_number]);
+    if (!fileActions->checksum_correction(ecuCalDef[rom_number]))
+        return;
 
     if (ecuCalDef[rom_number] != NULL)
         fileActions->save_subaru_rom_file(ecuCalDef[rom_number], ecuCalDef[rom_number]->FullFileName);
@@ -1531,7 +1536,8 @@ void MainWindow::save_calibration_file_as()
     else
         ecuCalDef[rom_number] = fileActions->checksum_correction(ecuCalDef[rom_number]);
 */
-    ecuCalDef[rom_number] = fileActions->checksum_correction(ecuCalDef[rom_number]);
+    if (!fileActions->checksum_correction(ecuCalDef[rom_number]))
+        return;
 
     if (ecuCalDef[rom_number] != NULL)
     {

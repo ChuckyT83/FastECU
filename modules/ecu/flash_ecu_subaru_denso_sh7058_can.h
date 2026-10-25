@@ -45,6 +45,10 @@ signals:
     void LOG_D(QString message, bool timestamp, bool linefeed);
 
 private:
+    friend class SubaruSafetyTest;
+    enum { STATUS_VERIFY_ERROR = 2, STATUS_CANCELLED = 3 };
+    bool valid_image() const;
+    bool operation_succeeded(int status) const { return status == 0 && !kill_process; }
     FileActions::EcuCalDefStructure *ecuCalDef;
     QString cmd_type;
 
@@ -62,7 +66,7 @@ private:
     bool flash_write_init = false;
 
     int result;
-    int mcu_type_index;
+    int mcu_type_index = -1;
     int bootloader_start_countdown = 3;
 
     uint8_t tester_id;

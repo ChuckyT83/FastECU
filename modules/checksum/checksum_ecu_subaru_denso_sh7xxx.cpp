@@ -12,6 +12,22 @@ ChecksumEcuSubaruDensoSH7xxx::~ChecksumEcuSubaruDensoSH7xxx()
 
 QByteArray ChecksumEcuSubaruDensoSH7xxx::calculate_checksum(QByteArray romData, uint32_t checksum_area_start, uint32_t checksum_area_length, int32_t offset)
 {
+    const Result result = evaluate(romData, checksum_area_start, checksum_area_length, offset);
+    if (result.state == State::Disabled)
+        QMessageBox::information(nullptr, QObject::tr("32-bit checksum"), "ROM has all checksums disabled");
+    else if (result.state == State::Corrected)
+        QMessageBox::information(nullptr, QObject::tr("Subaru Denso SH705x Checksum"), "Checksums corrected");
+    else if (!result.usable())
+        QMessageBox::warning(nullptr, QObject::tr("Checksum"), "Invalid checksum configuration; ROM preserved.");
+    return result.usable() ? result.image : romData;
+}
+
+ChecksumEcuSubaruDensoSH7xxx::Result ChecksumEcuSubaruDensoSH7xxx::evaluate(QByteArray romData, uint32_t checksum_area_start, uint32_t checksum_area_length, int32_t offset)
+{
+    if (!checksum_area_length || checksum_area_length % 12 ||
+        checksum_area_start > uint32_t(romData.size()) ||
+        checksum_area_length > uint32_t(romData.size()) - checksum_area_start)
+        return {State::Invalid, {}};
     QByteArray checksum_array;
 
     uint32_t checksum_area_end = checksum_area_start + checksum_area_length;
@@ -44,13 +60,16 @@ QByteArray ChecksumEcuSubaruDensoSH7xxx::calculate_checksum(QByteArray romData, 
         {
             offset = 0;
         }
-        uint32_t checksum_dword_addr_lo_with_offset = checksum_dword_addr_lo + offset;
-        uint32_t checksum_dword_addr_hi_with_offset = checksum_dword_addr_hi + offset;
+        const int64_t lo = int64_t(checksum_dword_addr_lo) + offset;
+        const int64_t hi = int64_t(checksum_dword_addr_hi) + offset;
+        if (lo < 0 || hi < lo || hi > romData.size() || lo % 4 || hi % 4)
+            return {State::Invalid, {}};
+        uint32_t checksum_dword_addr_lo_with_offset = uint32_t(lo);
+        uint32_t checksum_dword_addr_hi_with_offset = uint32_t(hi);
         if (i == checksum_area_start && checksum_dword_addr_lo_with_offset == 0 && checksum_dword_addr_hi_with_offset == 0 && checksum_diff == 0x5aa5a55a)
         {
             qDebug() << "ROM has all checksums disabled";
-            QMessageBox::information(nullptr, QObject::tr("32-bit checksum"), "ROM has all checksums disabled");
-            return 0;
+            return {State::Disabled, romData};
         }
 
         if (checksum_dword_addr_lo_with_offset == 0 && checksum_dword_addr_hi_with_offset == 0 && checksum_diff == 0x5aa5a55a)
@@ -100,11 +119,10 @@ QByteArray ChecksumEcuSubaruDensoSH7xxx::calculate_checksum(QByteArray romData, 
     {
         romData.replace(checksum_area_start, checksum_area_length, checksum_array);
         qDebug() << "Checksums corrected";
-        QMessageBox::information(nullptr, QObject::tr("Subaru Denso SH705x Checksum"), "Checksums corrected");
     }
     //else
     //    QMessageBox::information(nullptr, QObject::tr("Subaru Denso SH705x Checksum"), "Checksums OK");
 
-    return romData;
+    return {checksum_ok ? State::Valid : State::Corrected, romData};
 }
 

@@ -53,11 +53,20 @@ try {
         Invoke-Logged -Name 'build-transport' -File 'nmake.exe' -Arguments @('/NOLOGO')
         Invoke-Logged -Name 'transport-tests' -File (Join-Path $transportBuild 'j2534-transport.exe') -Arguments @('-o', "$(Join-Path $logs 'transport-results.txt'),txt", '-o', "$(Join-Path $logs 'transport-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $subaruBuild = Join-Path $build 'subaru'
+    New-Item -ItemType Directory -Force $subaruBuild | Out-Null
+    Push-Location $subaruBuild
+    try {
+        Invoke-Logged -Name 'qmake-subaru' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/safety.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-subaru' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
         ('Initialization: ' + ((Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:') -join ' '))
         ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Subaru safety: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
         ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
     ) -join '; '
