@@ -96,7 +96,10 @@ CommunicationResult::State FlashEcuSubaruDensoSH7058Can::validate_response(const
         }
     }
     if (uint8_t(response.at(4)) == 0x7f) {
-        return response.size() == 7 && uint8_t(response.at(5)) == sid ? CommState::Rejected : CommState::Malformed;
+        if (response.size() != 7 || uint8_t(response.at(5)) != sid) return CommState::Malformed;
+        // A pending response is not a definitive rejection or acknowledgement.
+        // Do not invent a wait/retry strategy or issue the next phase command.
+        return uint8_t(response.at(6)) == 0x78 ? CommState::Unsupported : CommState::Rejected;
     }
     if (uint8_t(response.at(4)) != uint8_t(sid + 0x40)) return CommState::Malformed;
     switch (sid) {
@@ -134,7 +137,8 @@ QByteArray FlashEcuSubaruDensoSH7058Can::receive_response(uint16_t timeout, bool
     }
     if (communication.ok()) {
         communication.state = drain ? CommState::Malformed : validate_response(outstandingRequest, communication.bytes);
-        if (!communication.ok()) communication.detail = "Malformed, unrelated or rejected ECU response";
+        if (!communication.ok()) communication.detail = communication.state == CommState::Unsupported ?
+            "Unsupported or pending ECU response; no waiting/retry strategy implemented" : "Malformed, unrelated or rejected ECU response";
     }
     if (communication.state == CommState::Success || communication.state == CommState::Rejected) return communication.bytes;
     if (communication.state == CommState::Timeout)

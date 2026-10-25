@@ -415,6 +415,13 @@ private slots:
         };
         QCOMPARE(module->connect_bootloader(),0); QCOMPARE(port.writes.size(),10);
     }
+    void pendingDoesNotAdvance_data() {QTest::addColumn<int>("stage");QTest::newRow("metadata")<<1;QTest::newRow("session")<<5;}
+    void pendingDoesNotAdvance() {
+        QFETCH(int,stage); diagnosticReplies(); auto original=port.respond; int step=0;
+        port.respond=[&](const QByteArray &a){if(step++==stage) return diagnosticResponse(QByteArray::fromHex("7f")+a.mid(4,1)+QByteArray::fromHex("78"));return original(a);};
+        QCOMPARE(module->connect_bootloader(),1); QCOMPARE(port.writes.size(),stage+1);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
+    }
     void readOutcome_data() {
         QTest::addColumn<int>("state");
         using S=CommunicationResult::State;
@@ -464,6 +471,7 @@ private slots:
                 row("/negative",bad,S::Malformed);
             } else {
                 row("/negative",diagnosticResponse(QByteArray::fromHex("7f")+request.mid(4,1)+QByteArray::fromHex("22")),S::Rejected);
+                row("/pending",diagnosticResponse(QByteArray::fromHex("7f")+request.mid(4,1)+QByteArray::fromHex("78")),S::Unsupported);
                 row("/unrelated-negative",diagnosticResponse(QByteArray::fromHex("7f0022")),S::Malformed);
                 const auto sid=uint8_t(request.at(4));
                 const bool variable=sid==0xAA || sid==0x10 || (sid==9 && uint8_t(request.at(5))==4);
