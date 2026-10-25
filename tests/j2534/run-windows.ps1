@@ -14,7 +14,14 @@ function Invoke-Logged {
     param([string]$Name, [string]$File, [string[]]$Arguments)
     & $File @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $logs "$Name.log")
     $code = $LASTEXITCODE
-    if ($code -ne 0) { throw "$Name failed with exit code $code" }
+    if ($code -ne 0) {
+        # Compiler/test output contains no credentials. Keep the diagnostic tail
+        # in a public annotation as well as the downloadable artifact.
+        $tail = (Get-Content (Join-Path $logs "$Name.log") -Tail 60) -join "`n"
+        $escaped = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+        Write-Output "::error title=$Name (exit $code)::$escaped"
+        throw "$Name failed with exit code $code"
+    }
 }
 
 Push-Location $build
@@ -33,6 +40,16 @@ try {
     Invoke-Logged -Name 'build-initialization-tests' -File 'nmake.exe' -Arguments @('/NOLOGO')
     $env:QT_QPA_PLATFORM = 'offscreen'
     Invoke-Logged -Name 'initialization-tests' -File (Join-Path $build 'j2534-windows-reliability.exe') -Arguments @('-o', "$(Join-Path $logs 'initialization-results.txt'),txt", '-o', "$(Join-Path $logs 'initialization-results.xml'),junitxml", '-o', '-,txt')
+    $evidence = @(
+        (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
+        (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
+        (Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:')
+        (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
+    ) -join '; '
+    Write-Output "::notice title=Native Windows J2534 results::$evidence"
+    if ($env:GITHUB_STEP_SUMMARY) {
+        $evidence | Add-Content $env:GITHUB_STEP_SUMMARY
+    }
 } finally {
     Pop-Location
 }
