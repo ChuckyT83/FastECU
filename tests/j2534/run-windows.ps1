@@ -62,8 +62,10 @@ try {
     try {
         Invoke-Logged -Name 'qmake-subaru' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/safety.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
         Invoke-Logged -Name 'build-subaru' -File 'nmake.exe' -Arguments @('/NOLOGO')
-        # The GUI phase tests need widgets, not a native display/font backend.
-        $env:QT_QPA_PLATFORM = 'minimal'
+        # Qt 5.15.2 QMessageBox on Windows dereferences platformNativeInterface
+        # for its system menu; minimal/offscreen lack that native interface.
+        # Timers drive the real Windows widgets without manual interaction.
+        $env:QT_QPA_PLATFORM = 'windows'
         $env:QT_STYLE_OVERRIDE = 'Fusion'
         Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-v1', '-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }

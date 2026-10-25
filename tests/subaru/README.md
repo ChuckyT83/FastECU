@@ -48,6 +48,6 @@ flag is observed; it cannot retract an operation already in flight.
 
 The normal commit/validate tests assert whole-command-trace SHA-256 values
 measured from the Task 004 production module using the same fixture. Windows
-runs the GUI suite with `QT_QPA_PLATFORM=minimal`; the serial suites retain their
+runs the GUI suite with `QT_QPA_PLATFORM=windows` and Fusion style; the serial suites retain their
 existing backend. The explicit test main flushes output so abnormal termination
 preserves startup markers and the last entered test in CI diagnostics.
