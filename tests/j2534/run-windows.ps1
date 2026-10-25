@@ -18,7 +18,7 @@ function Invoke-Logged {
         # Compiler/test output contains no credentials. Keep the diagnostic tail
         # in a public annotation as well as the downloadable artifact.
         $content = Get-Content (Join-Path $logs "$Name.log")
-        $diagnostics = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception|PASS|INFO.*entering' } | Select-Object -Last 20
+        $diagnostics = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception|PASS|INFO.*entering|Safety harness phase|^#' } | Select-Object -Last 20
         if (-not $diagnostics) { $diagnostics = $content | Where-Object { $_.Length -lt 500 } | Select-Object -Last 12 }
         $tail = $Name + "`n" + ($diagnostics -join "`n")
         if ($tail.Length -gt 3500) { $tail = $tail.Substring($tail.Length - 3500) }
@@ -59,6 +59,8 @@ try {
     try {
         Invoke-Logged -Name 'qmake-subaru' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/safety.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
         Invoke-Logged -Name 'build-subaru' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        # The GUI phase tests need widgets, not a native display/font backend.
+        $env:QT_QPA_PLATFORM = 'minimal'
         Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-v1', '-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
     $evidence = @(

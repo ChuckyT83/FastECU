@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <cstdio>
 #include <QMessageBox>
 #include <QCloseEvent>
 #include "serial_port_actions.h"
@@ -330,5 +331,13 @@ private slots:
         }
     }
 };
-QTEST_MAIN(SubaruSafetyTest)
+int main(int argc, char **argv) {
+    std::fprintf(stderr,"Safety harness phase: QApplication construction\n");
+    QApplication app(argc,argv);
+    app.setAttribute(Qt::AA_Use96Dpi,true);
+    std::fprintf(stderr,"Safety harness phase: fixture construction\n");
+    SubaruSafetyTest test;
+    std::fprintf(stderr,"Safety harness phase: QtTest execution\n");
+    return QTest::qExec(&test,argc,argv);
+}
 #include "safety.moc"
