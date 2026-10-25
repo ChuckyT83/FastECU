@@ -334,11 +334,16 @@ long J2534::PassThruDisconnect(unsigned long ChannelID)
 
 long J2534::PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_MSG *pMsg, unsigned long *pNumMsgs, unsigned long Timeout)
 {
+    if (!pMsg || !pNumMsgs || *pNumMsgs == 0)
+        return ERR_NULL_PARAMETER;
+    const unsigned long requested = *pNumMsgs;
     long result = STATUS_NOERROR;
     if (!checkDLL())
         return ERR_DEVICE_NOT_CONNECTED;
     DBGPRINT(("PassThruReadMsgs(ChannelID=%u,pMsg=@%08X,pNumMsgs=%u,Timeout=%u)\n",ChannelID,pMsg,*pNumMsgs,Timeout));
     result = (*pfPassThruReadMsgs)(ChannelID,pMsg,pNumMsgs,Timeout);
+    if (*pNumMsgs > requested)
+        return ERR_INVALID_MSG;
     DBGPRINT(("PassThruReadMsgs returned result %d\n",result));
     return result;
 }
@@ -466,8 +471,10 @@ int J2534::is_valid_sconfig_param(SCONFIG s)
 
 void J2534::dump_sbyte_array(const SBYTE_ARRAY* s)
 {
-    DBGPRINT(("SBYTE_ARRAY size=%u\n",s->NumOfBytes));
-    DBGDUMP((s->BytePtr,s->NumOfBytes,0));
+    // A driver may change the pointer/count before the caller validates them.
+    // Diagnostics must not dereference an untrusted returned byte array.
+    if (s)
+        DBGPRINT(("SBYTE_ARRAY reported size=%lu (payload not dereferenced)\n",s->NumOfBytes));
 }
 
 void J2534::dump_sconfig_param(SCONFIG s)
@@ -696,8 +703,12 @@ long J2534::PassThruIoctl(unsigned long ChannelID, unsigned long IoctlID, const 
 
     DBGPRINT(("PassThruIoctl(ChannelID=%u,Ioctl=%s,pInput=@%08X,pOutputMsgID=@%08X)\n",ChannelID,IoctlName,pInput,pOutput));
 
+    if ((input_as_sa && !pInput) || (output_as_sa && !pOutput))
+        return ERR_NULL_PARAMETER;
     if (IoctlID == SET_CONFIG)
     {
+        if (!pInput || !static_cast<const SCONFIG_LIST *>(pInput)->ConfigPtr)
+            return ERR_NULL_PARAMETER;
         pOutput = NULL; // make some DLLs happy
 
         // dump params

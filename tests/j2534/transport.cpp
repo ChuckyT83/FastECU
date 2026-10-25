@@ -222,6 +222,9 @@ private slots:
         QCOMPARE(value(4),1UL); QCOMPARE(value(0),0UL);
     }
     void fiveBaudBounds() {
+#ifdef Q_OS_WIN
+        port->j2534->debug(true); // malformed output must also be safe in diagnostics
+#endif
         QVERIFY(port->five_baud_init(QByteArray()).isEmpty());
         QVERIFY(port->five_baud_init(QByteArray(21,'x')).isEmpty()); QCOMPARE(value(4),0UL);
         QCOMPARE(port->five_baud_init(QByteArray(1,char(0x33))),QByteArray(2,char(0x55)));
