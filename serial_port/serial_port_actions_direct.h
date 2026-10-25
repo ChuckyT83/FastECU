@@ -1,6 +1,7 @@
 #ifndef SERIAL_PORT_ACTIONS_DIRECT_H
 #define SERIAL_PORT_ACTIONS_DIRECT_H
 
+#include "communication_result.h"
 #include <QCoreApplication>
 #include <QByteArray>
 #include <QComboBox>
@@ -151,11 +152,17 @@ public:
 
     bool get_is_tx_done();
 
+    CommunicationResult write_j2534_checked(QByteArray output);
+    CommunicationResult read_j2534_checked(uint16_t timeout);
+
     enum class TransportState { Idle, Success, NoMessage, Partial, Error };
     TransportState transport_state() const { return transportState; }
     long transport_status() const { return transportStatus; }
 
 private:
+    long communicationDriverStatus = 0;
+    bool communicationHasDriverStatus = false;
+    CommunicationResult communication_result(const QByteArray &bytes, bool write);
     friend class J2534ReliabilityTest;
     friend class J2534TransportTest;
 #ifndef ARRAYSIZE

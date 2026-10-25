@@ -26,11 +26,15 @@ static QByteArray image() {
     return bytes;
 }
 static QByteArray ack(int command, uint32_t value = 0) {
+    int payload=0;
+    if(command==SUB_KERNEL_CRC || command==SUB_KERNEL_GET_MAX_MSG_SIZE || command==SUB_KERNEL_GET_MAX_BLK_SIZE || command==SUB_KERNEL_ID) payload=4;
+    if(command==SUB_KERNEL_PROG_VOLT) payload=2;
     QByteArray a(13, '\0');
     a[2] = '\7'; a[3] = char(0xE8);
     a[4] = char(SUB_KERNEL_START_COMM >> 8); a[5] = char(SUB_KERNEL_START_COMM);
-    a[7] = '\5'; a[8] = char(command | 0x40);
+    a[7] = char(payload+1); a[8] = char(command | 0x40);
     put32(a, 9, value);
+    a.resize(9+payload);
     return a;
 }
 
@@ -69,6 +73,8 @@ class SubaruSafetyTest : public QObject {
     }
 private slots:
     void init() {
+        port.direct=true; port.writeState=CommunicationResult::State::Success;
+        port.readState=CommunicationResult::State::Success; port.checkedReads=0; port.beforeRead={};
         cal.FullRomData = image(); cal.McuType = "SH7058";
         cal.Sh7058PreparedImageHash = SubaruSH7058Safety::fingerprint(cal.FullRomData);
         module = new FlashEcuSubaruDensoSH7058Can(&port, &cal, "write");
@@ -335,6 +341,219 @@ private slots:
             }
         }
     }
+private:
+    // Test helpers use the existing private friend seam.
+    static QByteArray diagnosticRequest(QByteArray bytes) { return QByteArray::fromHex("000007e0")+bytes; }
+    static QByteArray diagnosticResponse(QByteArray bytes) { return QByteArray::fromHex("000007e8")+bytes; }
+    void diagnosticReplies() {
+        port.respond=[](const QByteArray &request) {
+            const auto data=request.mid(4);
+            if(data.startsWith(QByteArray::fromHex("beef"))) return QByteArray(); // kernel absent, ordinary timeout
+            if(data==QByteArray::fromHex("aa")) return diagnosticResponse(QByteArray::fromHex("ea0000000102030405"));
+            if(data==QByteArray::fromHex("0902")) return diagnosticResponse(QByteArray::fromHex("490201")+QByteArray("12345678901234567"));
+            if(data==QByteArray::fromHex("0904")) return diagnosticResponse(QByteArray::fromHex("490401")+QByteArray("CALTEST1"));
+            if(data==QByteArray::fromHex("0906")) return diagnosticResponse(QByteArray::fromHex("49060111223344"));
+            if(data==QByteArray::fromHex("1043")) return diagnosticResponse(QByteArray::fromHex("7f1012"));
+            if(data.startsWith(QByteArray::fromHex("10"))) return diagnosticResponse(QByteArray::fromHex("50")+data.mid(1));
+            if(data==QByteArray::fromHex("2701")) return diagnosticResponse(QByteArray::fromHex("670101020304"));
+            if(data.startsWith(QByteArray::fromHex("2702"))) return diagnosticResponse(QByteArray::fromHex("6702"));
+            return QByteArray();
+        };
+    }
+private slots:
+    void writeFailurePhases_data() {
+        QTest::addColumn<int>("index");
+        for(int index : {0,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,45})
+            QTest::newRow(qPrintable(QString("submission-%1").arg(index))) << index;
+    }
+    void writeFailurePhases() {
+        QFETCH(int,index); int attempted=0, readsAtFailure=-1;
+        port.failWrite=[&](const QByteArray &){
+            if(attempted++==index) { readsAtFailure=port.checkedReads; port.pending=ack(SUB_KERNEL_COMMIT_FLASH_BUFFER); return true; }
+            return false;
+        };
+        QCOMPARE(module->write_mem(false),1);
+        QCOMPARE(port.writes.size(),index+1); QCOMPARE(port.checkedReads,readsAtFailure);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::TransportError));
+        QVERIFY(module->communication.hasStatus); QCOMPARE(module->communication.status,7L);
+        if(index<=20) QCOMPARE(commands().count(SUB_KERNEL_WRITE_FLASH_BUFFER),0);
+        if(index<=28) QCOMPARE(commands().count(SUB_KERNEL_COMMIT_FLASH_BUFFER),0);
+    }
+    void diagnosticFailure_data() {
+        QTest::addColumn<int>("index");
+        for(int i=0;i<10;++i) QTest::newRow(qPrintable(QString::number(i)))<<i;
+    }
+    void diagnosticFailure() {
+        QFETCH(int,index); diagnosticReplies(); int attempted=0, readsAtFailure=-1;
+        port.failWrite=[&](const QByteArray &){ if(attempted++==index) {readsAtFailure=port.checkedReads; return true;} return false;};
+        QCOMPARE(module->connect_bootloader(),1);
+        QCOMPARE(port.writes.size(),index+1); QCOMPARE(port.checkedReads,readsAtFailure);
+        QVERIFY(!module->kernel_alive);
+    }
+    void diagnosticNormal() {
+        diagnosticReplies(); QCOMPARE(module->connect_bootloader(),0);
+        QCOMPARE(port.writes.size(),10);
+        QCOMPARE(port.writes.last(),diagnosticRequest(QByteArray::fromHex("1002")));
+    }
+    void readOutcome_data() {
+        QTest::addColumn<int>("state");
+        using S=CommunicationResult::State;
+        QTest::newRow("timeout")<<int(S::Timeout); QTest::newRow("driver-error")<<int(S::TransportError);
+        QTest::newRow("disconnected")<<int(S::Disconnected); QTest::newRow("partial")<<int(S::Malformed);
+    }
+    void readOutcome() {
+        QFETCH(int,state); port.readState=CommunicationResult::State(state);
+        QCOMPARE(module->write_mem(false),1); QCOMPARE(port.writes.size(),1);
+        QCOMPARE(int(module->communication.state),state);
+        QVERIFY(module->communication.hasStatus); QCOMPARE(module->communication.status,7L);
+    }
+    void remoteRejected_data() {
+        QTest::addColumn<QString>("condition");
+        QTest::newRow("invalid-reply")<<QString("invalid");
+        QTest::newRow("RPC-timeout")<<QString("timeout");
+        QTest::newRow("endpoint-disconnected")<<QString("disconnected");
+    }
+    void remoteRejected() {
+        QFETCH(QString,condition); Q_UNUSED(condition);
+        // No RPC is issued in any remote state; thus no invalid/default reply
+        // can be reinterpreted as a successful empty write.
+        port.direct=false;
+        QVERIFY(!module->submit(diagnosticRequest(QByteArray::fromHex("aa"))));
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
+        QTimer timer; connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) b->accept();}); timer.start(1);
+        module->run(); QCOMPARE(port.setupCalls,0); QVERIFY(port.writes.isEmpty()); QCOMPARE(port.checkedReads,0);
+    }
+    void parserFrames_data() {
+        QTest::addColumn<QByteArray>("request"); QTest::addColumn<QByteArray>("response"); QTest::addColumn<int>("expected");
+        using S=CommunicationResult::State;
+        auto add=[&](const QString &name,const QByteArray &request,const QByteArray &valid,bool kernel) {
+            auto row=[&](QString suffix,QByteArray reply,S result){QTest::newRow(qPrintable(name+suffix))<<request<<reply<<int(result);};
+            row("/valid",valid,S::Success);
+            QVector<int> lengths={0,1,4,5,6,7,8};
+            if(!lengths.contains(valid.size()-1)) lengths.append(valid.size()-1);
+            for(int n : lengths) if(n<valid.size()) row(QString("/short-%1").arg(n),valid.left(n),S::Malformed);
+            auto bad=valid; bad[3]=char(0xE9); row("/wrong-address",bad,S::Malformed);
+            bad=valid; bad[4]=char(0x7E); row("/wrong-service",bad,S::Malformed);
+            if(kernel) {
+                bad=valid; bad[8]=char(uint8_t(bad.at(8))^1); row("/wrong-command",bad,S::Malformed);
+                bad=valid; bad[7]=char(uint8_t(bad[7])+1); row("/bad-declared-length",bad,S::Malformed);
+                row("/trailing",valid+QByteArray(1,'x'),S::Malformed);
+                bad=valid+QByteArray(1,'x'); const int length=bad.size()-8; bad[6]=char(length>>8);bad[7]=char(length);
+                row("/declared-extra",bad,uint8_t(request.at(8))==SUB_KERNEL_ID ? S::Success : S::Malformed);
+                bad=valid.left(8)+QByteArray::fromHex("7f")+request.mid(8,1)+QByteArray::fromHex("22"); bad[6]=0;bad[7]=3;
+                row("/negative",bad,S::Malformed);
+            } else {
+                row("/negative",diagnosticResponse(QByteArray::fromHex("7f")+request.mid(4,1)+QByteArray::fromHex("22")),S::Rejected);
+                row("/unrelated-negative",diagnosticResponse(QByteArray::fromHex("7f0022")),S::Malformed);
+                const auto sid=uint8_t(request.at(4));
+                const bool variable=sid==0xAA || sid==0x10 || (sid==9 && uint8_t(request.at(5))==4);
+                row("/trailing",valid+QByteArray(1,'x'),variable ? S::Success : S::Malformed);
+                if(sid==9 || sid==0x10 || sid==0x27) {bad=valid;bad[5]=char(uint8_t(bad.at(5))+1);row("/wrong-subfunction",bad,S::Malformed);}
+            }
+        };
+        for(int cmd : {SUB_KERNEL_ID,SUB_KERNEL_CRC,SUB_KERNEL_GET_MAX_MSG_SIZE,SUB_KERNEL_GET_MAX_BLK_SIZE,SUB_KERNEL_PROG_VOLT,
+              SUB_KERNEL_FLASH_ENABLE,SUB_KERNEL_FLASH_DISABLE,SUB_KERNEL_BLANK_PAGE,SUB_KERNEL_WRITE_FLASH_BUFFER,
+              SUB_KERNEL_VALIDATE_FLASH_BUFFER,SUB_KERNEL_COMMIT_FLASH_BUFFER,SUB_KERNEL_READ_AREA}) {
+            QByteArray request=QByteArray::fromHex("000007e0beef0001");request.append(char(cmd));
+            auto valid=ack(cmd,0x1000);
+            if(cmd==SUB_KERNEL_READ_AREA) {request.append(QByteArray::fromHex("000000000400"));valid=ack(cmd)+QByteArray(1024,'R');valid[6]=4;valid[7]=1;}
+            add(QString("kernel-%1").arg(cmd),request,valid,true);
+        }
+        const QVector<QPair<QByteArray,QByteArray>> frames={
+            {QByteArray::fromHex("aa"),QByteArray::fromHex("ea0000000102030405")},
+            {QByteArray::fromHex("0902"),QByteArray::fromHex("490201")+QByteArray(17,'V')},
+            {QByteArray::fromHex("0904"),QByteArray::fromHex("490401")+QByteArray("C")},
+            {QByteArray::fromHex("0906"),QByteArray::fromHex("49060111223344")},
+            {QByteArray::fromHex("1003"),QByteArray::fromHex("5003")},
+            {QByteArray::fromHex("1043"),QByteArray::fromHex("5043")},
+            {QByteArray::fromHex("2701"),QByteArray::fromHex("670101020304")},
+            {QByteArray::fromHex("270200000000"),QByteArray::fromHex("6702")},
+            {QByteArray::fromHex("a800000001000002000003000004"),QByteArray::fromHex("e811223344")}};
+        for(const auto &pair:frames) add("diagnostic-"+pair.first.toHex(),diagnosticRequest(pair.first),diagnosticResponse(pair.second),false);
+    }
+    void parserFrames() {
+        QFETCH(QByteArray,request); QFETCH(QByteArray,response); QFETCH(int,expected);
+        QCOMPARE(int(module->validate_response(request,response)),expected);
+    }
+    void malformedStopsDestruction() {
+        auto original=port.respond;
+        port.respond=[&](const QByteArray &a){if(uint8_t(a.at(8))==SUB_KERNEL_BLANK_PAGE) return ack(SUB_KERNEL_COMMIT_FLASH_BUFFER); return original(a);};
+        QCOMPARE(module->write_mem(false),1);
+        QCOMPARE(commands().count(SUB_KERNEL_WRITE_FLASH_BUFFER),0);
+        QCOMPARE(commands().count(SUB_KERNEL_COMMIT_FLASH_BUFFER),0);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Malformed));
+    }
+    void completeRead_data() {
+        QTest::addColumn<QString>("fault");
+        for(const char *p : {"none","missing","short","header-only","oversized","driver","cancel","cancel-final-progress"}) QTest::newRow(p)<<QString(p);
+    }
+    void completeRead() {
+        QFETCH(QString,fault); const auto before=cal.FullRomData;
+        int pages=0;
+        port.respond=[&](const QByteArray &a){
+            const int page=pages++;
+            if(page==10 && fault=="missing") return QByteArray();
+            if(page==10 && fault=="driver") {port.readState=CommunicationResult::State::TransportError; return QByteArray();}
+            if(page==10 && fault=="cancel") cancel();
+            if(page==1023 && fault=="cancel-final-progress") QTimer::singleShot(0,module,[&]{cancel();});
+            int length=1024;
+            if(page==10 && fault=="short") length=1023;
+            if(page==10 && fault=="header-only") length=0;
+            if(page==10 && fault=="oversized") length=1025;
+            auto response=ack(SUB_KERNEL_READ_AREA)+QByteArray(length,char(page%127));
+            const unsigned declared=response.size()-8;response[6]=char(declared>>8);response[7]=char(declared);
+            return response;
+        };
+        const int result=module->read_mem(0,1048576);
+        if(fault=="none") {
+            QCOMPARE(result,0); QCOMPARE(pages,1024); QCOMPARE(cal.FullRomData.size(),1048576);
+            for(int i=0;i<1024;++i) QCOMPARE(cal.FullRomData.mid(i*1024,1024),QByteArray(1024,char(i%127)));
+            for(int i=0;i<1024;++i) { QCOMPARE(port.writes[i].size(),15); QCOMPARE(get32(port.writes[i],9),uint32_t(i*1024)); }
+        } else {
+            QVERIFY(result!=0); QCOMPARE(pages,fault=="cancel-final-progress" ? 1024 : 11); QCOMPARE(cal.FullRomData,before);
+            if(fault.startsWith("cancel")) QCOMPARE(result,3);
+        }
+    }
+    void failedWriteUi() {
+        port.failWrite=[](const QByteArray &a){return a.size()>=9 && uint8_t(a.at(8))==SUB_KERNEL_BLANK_PAGE;};
+        QString outcome;
+        QTimer timer; connect(&timer,&QTimer::timeout,[&]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) {
+            if(b->windowTitle()=="ECU Operation") outcome=b->text();
+            b->button(QMessageBox::Ok)->click();
+        }}); timer.start(1);
+        module->run(); QVERIFY(outcome.contains("operation failed")); QVERIFY(!outcome.contains("was succesful"));
+        QCOMPARE(commands().count(SUB_KERNEL_WRITE_FLASH_BUFFER),0);
+    }
+    void malformedDiagnosticStops_data() { QTest::addColumn<int>("stage"); for(int i=1;i<10;++i) QTest::newRow(qPrintable(QString::number(i)))<<i; }
+    void malformedDiagnosticStops() {
+        QFETCH(int,stage); diagnosticReplies(); auto reply=port.respond; int step=0;
+        port.respond=[&](const QByteArray &a){ auto bytes=reply(a); if(step++==stage) bytes.resize(5); return bytes; };
+        QCOMPARE(module->connect_bootloader(),1); QCOMPARE(port.writes.size(),stage+1);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Malformed));
+    }
+    void kernelPreparation_data() {
+        QTest::addColumn<int>("length"); QTest::addColumn<uint>("destination"); QTest::addColumn<bool>("valid");
+        for(int n : {0,1,3,4,128,129,6428,0x9000,0x9001}) QTest::newRow(qPrintable(QString::number(n)))<<n<<uint(0xFFFF3000)<<bool(n>=4 && n<=0x9000);
+        QTest::newRow("below-RAM")<<128<<uint(0xFFFF2F80)<<false;
+        QTest::newRow("past-RAM")<<128<<uint(0xFFFFC000)<<false;
+        QTest::newRow("unaligned")<<128<<uint(0xFFFF3001)<<false;
+    }
+    void kernelPreparation() {
+        QFETCH(int,length); QFETCH(uint,destination); QFETCH(bool,valid);
+        QByteArray output; const QByteArray input(length,'K');
+        QCOMPARE(module->prepare_kernel(input,destination,output),valid);
+        if(valid) { QCOMPARE(output.size(),((length+127)/128)*128); QVERIFY(!output.isEmpty()); QCOMPARE(output.size()%128,0); }
+        else QVERIFY(output.isEmpty());
+        QVERIFY(port.writes.isEmpty());
+    }
+    void kernelUploadGated() {
+        QTemporaryFile file; QVERIFY(file.open()); QCOMPARE(file.write(QByteArray(6428,'K')),qint64(6428));file.flush();file.close();
+        QCOMPARE(module->upload_kernel(file.fileName(),0xFFFF3000),1);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
+        QVERIFY(port.writes.isEmpty());
+        cancel(); QCOMPARE(module->upload_kernel(file.fileName(),0xFFFF3000),3); QVERIFY(port.writes.isEmpty());
+    }
+
 };
 int main(int argc, char **argv) {
     // Preserve the last test name even if the process terminates abnormally.

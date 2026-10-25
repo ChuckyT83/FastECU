@@ -30,6 +30,10 @@ public:
     ~SerialPortActions();
 
     bool isDirectConnection(void);
+    // SH7058 additive API. Remote/non-J2534 operation fails closed; legacy
+    // QByteArray methods and the QtRO replica contract are unchanged.
+    CommunicationResult write_checked(QByteArray output);
+    CommunicationResult read_checked(uint16_t timeout);
 
     bool get_serialPortAvailable();
     bool set_serialPortAvailable(bool value);

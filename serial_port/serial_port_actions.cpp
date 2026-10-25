@@ -1178,3 +1178,31 @@ QString SerialPortActions::parse_message_to_hex(QByteArray received)
 
     return msg;
 }
+
+CommunicationResult SerialPortActions::write_checked(QByteArray output)
+{
+    if (!isDirectConnection())
+        return CommunicationResult::failure(CommunicationResult::State::Unsupported,
+            "Remote SH7058 communication has no explicit result contract");
+    set_comm_busy(true);
+    emit LOG_D("Sent: " + parse_message_to_hex(output.mid(0,20)), true, true);
+    const auto result = serial_direct->write_j2534_checked(output);
+    if (!result.ok()) set_comm_busy(false);
+    return result;
+}
+
+CommunicationResult SerialPortActions::read_checked(uint16_t timeout)
+{
+    if (!isDirectConnection())
+        return CommunicationResult::failure(CommunicationResult::State::Unsupported,
+            "Remote SH7058 communication has no explicit result contract");
+    // Capture the outcome before optional adapter metadata polling changes it.
+    const auto result = serial_direct->read_j2534_checked(timeout);
+    emit LOG_D("Response: " + parse_message_to_hex(result.bytes.mid(0,20)), true, true);
+    if ((result.ok() || result.state == CommunicationResult::State::Timeout) && get_read_vbatt()) {
+        vBatt = serial_direct->read_vbatt();
+        set_read_vbatt(false);
+    }
+    set_comm_busy(false);
+    return result;
+}

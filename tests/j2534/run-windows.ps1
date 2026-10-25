@@ -69,12 +69,21 @@ try {
         $env:QT_STYLE_OVERRIDE = 'Fusion'
         Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-v1', '-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $facadeBuild = Join-Path $build 'facade'
+    New-Item -ItemType Directory -Force $facadeBuild | Out-Null
+    Push-Location $facadeBuild
+    try {
+        Invoke-Logged -Name 'qmake-facade' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/facade.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-facade' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'facade-tests' -File (Join-Path $facadeBuild 'subaru-facade.exe') -Arguments @('-o', "$(Join-Path $logs 'facade-results.txt'),txt", '-o', "$(Join-Path $logs 'facade-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
         ('Initialization: ' + ((Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:') -join ' '))
         ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
         ('Subaru safety: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
         ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
     ) -join '; '

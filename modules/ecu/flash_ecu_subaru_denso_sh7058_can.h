@@ -12,6 +12,7 @@
 #include <QWidget>
 
 #include <kernelcomms.h>
+#include "serial_port/communication_result.h"
 #include <kernelmemorymodels.h>
 #include <file_actions.h>
 #include <ui_ecu_operations.h>
@@ -48,6 +49,15 @@ private:
     friend class SubaruSafetyTest;
     enum { STATUS_VERIFY_ERROR = 2, STATUS_CANCELLED = 3 };
     bool valid_image() const;
+    CommunicationResult communication;
+    QByteArray outstandingRequest;
+    bool submit(const QByteArray &request);
+    QByteArray receive_response(uint16_t timeout, bool drain = false);
+    bool communication_failed(bool optional = false) const;
+    int communication_status() const;
+    static CommunicationResult::State validate_response(const QByteArray &request, const QByteArray &response);
+    bool prepare_kernel(const QByteArray &input, uint32_t destination, QByteArray &encrypted);
+
     FileActions::EcuCalDefStructure *ecuCalDef;
     QString cmd_type;
 
@@ -143,7 +153,7 @@ private:
     QByteArray calculate_ecutek_racerom_seed_key(uint32_t req_seed);//QByteArray requested_seed);
     QByteArray generate_ecutek_racerom_can_seed_key(QByteArray requested_seed);
     unsigned long long decrypt_racerom_seed(const unsigned long long base, const unsigned long long exponent, const unsigned long long modulus);
-    uint32_t read_ram_location(uint32_t loc);
+    bool read_ram_location(uint32_t loc, uint32_t &value);
 
     SerialPortActions *serial;
     Ui::EcuOperationsWindow *ui;

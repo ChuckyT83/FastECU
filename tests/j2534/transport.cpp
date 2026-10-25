@@ -75,6 +75,44 @@ private slots:
         reset();
     }
     void cleanup() { port.reset(); }
+    void checkedWrite_data() {
+        QTest::addColumn<long>("status"); QTest::addColumn<ulong>("count"); QTest::addColumn<int>("state");
+        using S=CommunicationResult::State;
+        QTest::newRow("success")<<0L<<1UL<<int(S::Success);
+        QTest::newRow("zero-count")<<0L<<0UL<<int(S::TransportError);
+        QTest::newRow("driver-error")<<long(ERR_FAILED)<<0UL<<int(S::TransportError);
+        QTest::newRow("invalid-channel")<<long(ERR_INVALID_CHANNEL_ID)<<0UL<<int(S::Disconnected);
+        QTest::newRow("uncertain-write")<<long(ERR_TIMEOUT)<<1UL<<int(S::TransportError);
+    }
+    void checkedWrite() {
+        QFETCH(long,status); QFETCH(ulong,count); QFETCH(int,state);
+        tx(status,count); const auto result=port->write_j2534_checked(message);
+        QCOMPARE(int(result.state),state); QVERIFY(result.hasStatus); QCOMPARE(result.status,status);
+        QCOMPARE(value(0),1UL); QVERIFY(result.bytes.isEmpty());
+    }
+    void checkedRead_data() {
+        QTest::addColumn<long>("status"); QTest::addColumn<ulong>("count"); QTest::addColumn<ulong>("length"); QTest::addColumn<int>("state");
+        using S=CommunicationResult::State;
+        QTest::newRow("success")<<0L<<1UL<<8UL<<int(S::Success);
+        QTest::newRow("timeout")<<long(ERR_TIMEOUT)<<0UL<<0UL<<int(S::Timeout);
+        QTest::newRow("empty")<<long(ERR_BUFFER_EMPTY)<<0UL<<0UL<<int(S::Timeout);
+        QTest::newRow("driver-error")<<long(ERR_FAILED)<<0UL<<0UL<<int(S::TransportError);
+        QTest::newRow("invalid-channel")<<long(ERR_INVALID_CHANNEL_ID)<<0UL<<0UL<<int(S::Disconnected);
+        QTest::newRow("partial")<<long(ERR_TIMEOUT)<<1UL<<8UL<<int(S::Malformed);
+        QTest::newRow("oversized")<<0L<<1UL<<ulong(PASSTHRU_MSG_DATA_SIZE+1)<<int(S::Malformed);
+    }
+    void checkedRead() {
+        QFETCH(long,status); QFETCH(ulong,count); QFETCH(ulong,length); QFETCH(int,state);
+        rx(status,count,length,0,0); const auto result=port->read_j2534_checked(5);
+        QCOMPARE(int(result.state),state); QVERIFY(result.hasStatus); QCOMPARE(result.status,status);
+        if(result.ok()) QCOMPARE(result.bytes.size(),int(length));
+    }
+    void checkedUnsupported() {
+        port->use_openport2_adapter=false;
+        QCOMPARE(int(port->write_j2534_checked(message).state),int(CommunicationResult::State::Unsupported));
+        QCOMPARE(int(port->read_j2534_checked(5).state),int(CommunicationResult::State::Unsupported));
+        QCOMPARE(value(0),0UL); QCOMPARE(value(1),0UL);
+    }
     void transmit_data() {
         QTest::addColumn<long>("status"); QTest::addColumn<ulong>("count"); QTest::addColumn<bool>("ok");
         QTest::newRow("success") << long(0) << ulong(1) << true;

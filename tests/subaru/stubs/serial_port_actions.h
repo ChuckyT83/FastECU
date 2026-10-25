@@ -2,12 +2,39 @@
 #define SUBARU_TEST_SERIAL_H
 // Link-time fake API. The production module is compiled unchanged against this
 // header; no real facade, J2534 loader or serial backend is linked into this test.
+#include "serial_port/communication_result.h"
 #include <QByteArray>
 #include <QString>
 #include <QVector>
 #include <functional>
 class SerialPortActions {
 public:
+    bool direct = true;
+    CommunicationResult::State writeState = CommunicationResult::State::Success;
+    CommunicationResult::State readState = CommunicationResult::State::Success;
+    int checkedReads = 0;
+    std::function<void()> beforeRead;
+    bool isDirectConnection() { return direct; }
+    CommunicationResult write_checked(QByteArray bytes) {
+        if (!direct) return CommunicationResult::failure(CommunicationResult::State::Unsupported,"Remote unsupported");
+        auto result=CommunicationResult::failure(writeState,"Injected write result");
+        result.hasStatus=true; result.status=writeState==CommunicationResult::State::Success ? 0 : 7;
+        if (writeState!=CommunicationResult::State::Success) { writes.append(bytes); last=bytes; return result; }
+        auto legacy=write_serial_data_echo_check(bytes);
+        if (!legacy.isEmpty()) { result.state=CommunicationResult::State::TransportError; result.status=7; }
+        return result;
+    }
+    CommunicationResult read_checked(uint16_t timeout) {
+        if (!direct) return CommunicationResult::failure(CommunicationResult::State::Unsupported,"Remote unsupported");
+        ++checkedReads;
+        if (beforeRead) beforeRead();
+        auto result=CommunicationResult::failure(readState,"Injected read result");
+        result.hasStatus=true; result.status=readState==CommunicationResult::State::Success ? 0 : 7;
+        if (readState!=CommunicationResult::State::Success) return result;
+        result.bytes=read_serial_data(timeout);
+        if (result.bytes.isEmpty()) result.state=CommunicationResult::State::Timeout;
+        return result;
+    }
     QVector<QByteArray> writes;
     int setupCalls = 0;
     QByteArray pending;

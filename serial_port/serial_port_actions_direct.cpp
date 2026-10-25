@@ -994,6 +994,8 @@ int SerialPortActionsDirect::write_j2534_data(QByteArray output)
     memcpy(txmsg.Data, output.constData(), static_cast<size_t>(output.size()));
     unsigned long count = 1;
     const long status = j2534->PassThruWriteMsgs(chanID, &txmsg, &count, 100);
+    communicationDriverStatus = status;
+    communicationHasDriverStatus = true;
     // One atomic message is submitted; never retry an uncertain write or split
     // a message into new frames. Even count==1 with an error is not success.
     if (count > 1)
@@ -1072,6 +1074,8 @@ QByteArray SerialPortActionsDirect::read_j2534_data(unsigned long timeout)
         const auto elapsed = static_cast<unsigned long>(timer.elapsed());
         const unsigned long remaining = elapsed >= timeout ? 0 : timeout - elapsed;
         const long status = j2534->PassThruReadMsgs(chanID, &msg, &count, remaining);
+        communicationDriverStatus = status;
+        communicationHasDriverStatus = true;
         const bool noMessage = status == ERR_TIMEOUT || status == ERR_BUFFER_EMPTY;
         if (status != STATUS_NOERROR && !noMessage)
         {
@@ -1697,3 +1701,42 @@ QString SerialPortActionsDirect::parse_message_to_hex(QByteArray received)
     return msg;
 }
 
+
+CommunicationResult SerialPortActionsDirect::communication_result(const QByteArray &bytes, bool write)
+{
+    using State = CommunicationResult::State;
+    CommunicationResult r;
+    r.bytes = write ? QByteArray() : bytes;
+    r.status = communicationDriverStatus;
+    r.hasStatus = communicationHasDriverStatus;
+    if (transportState == TransportState::Success && (!write || bytes.isEmpty())) r.state = State::Success;
+    else if (!write && transportState == TransportState::NoMessage) r.state = State::Timeout;
+    else if (!write && transportState == TransportState::Partial) r.state = State::Malformed;
+    else if (transportStatus == ERR_INVALID_CHANNEL_ID || transportStatus == ERR_INVALID_DEVICE_ID || transportStatus == ERR_DEVICE_NOT_CONNECTED) r.state = State::Disconnected;
+    else if (transportStatus == ERR_INVALID_MSG) r.state = State::Malformed;
+    else r.state = State::TransportError;
+    r.detail = QString("J2534 outcome %1, local status 0x%2").arg(int(r.state)).arg(transportStatus,0,16);
+    return r;
+}
+
+CommunicationResult SerialPortActionsDirect::write_j2534_checked(QByteArray output)
+{
+    if (!use_openport2_adapter)
+        return CommunicationResult::failure(CommunicationResult::State::Unsupported, "SH7058 checked communication requires J2534");
+    communicationHasDriverStatus = false;
+    communicationDriverStatus = 0;
+    transportState = TransportState::Idle;
+    const QByteArray result = write_serial_data_echo_check(output);
+    return communication_result(result, true);
+}
+
+CommunicationResult SerialPortActionsDirect::read_j2534_checked(uint16_t timeout)
+{
+    if (!use_openport2_adapter)
+        return CommunicationResult::failure(CommunicationResult::State::Unsupported, "SH7058 checked communication requires J2534");
+    communicationHasDriverStatus = false;
+    communicationDriverStatus = 0;
+    transportState = TransportState::Idle;
+    const QByteArray bytes = read_serial_data(timeout);
+    return communication_result(bytes, false);
+}
