@@ -172,6 +172,11 @@ void FlashEcuSubaruDensoSH7058Can::run()
             break;
         mcu_type_index++;
     }
+    if (!SubaruSH7058Safety::memoryMap(mcu_type_string)) {
+        communication = CommunicationResult::failure(CommState::Unsupported, "Unsupported or inconsistent SH7058 memory model; operation blocked before communication");
+        QMessageBox::warning(this, tr("SH7058 ROM validation"), communication.detail);
+        return;
+    }
     if ((cmd_type == "write" || cmd_type == "test_write") &&
         (!valid_image() || ecuCalDef->Sh7058PreparedImageHash.isEmpty() ||
          ecuCalDef->Sh7058PreparedImageHash != SubaruSH7058Safety::fingerprint(ecuCalDef->FullRomData))) {

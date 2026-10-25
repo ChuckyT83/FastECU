@@ -559,6 +559,12 @@ private slots:
         QCOMPARE(module->connect_bootloader(),1); QCOMPARE(port.writes.size(),stage+1);
         QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Malformed));
     }
+    void readModelRejected_data() {QTest::addColumn<QString>("mcu");QTest::newRow("unknown")<<QString("unknown");QTest::newRow("wrong-model")<<QString("SH7055");}
+    void readModelRejected() {
+        QFETCH(QString,mcu);cal.McuType=mcu;module->cmd_type="read";
+        QTimer timer;connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets())if(auto *b=qobject_cast<QMessageBox*>(w))b->accept();});timer.start(1);
+        module->run();QCOMPARE(module->operation_result(),1);QCOMPARE(port.setupCalls,0);QVERIFY(port.writes.isEmpty());
+    }
     void kernelPreparation_data() {
         QTest::addColumn<int>("length"); QTest::addColumn<uint>("destination"); QTest::addColumn<bool>("valid");
         for(int n : {0,1,3,4,128,129,6428,0x9000,0x9001}) QTest::newRow(qPrintable(QString::number(n)))<<n<<uint(0xFFFF3000)<<bool(n>=4 && n<=0x9000);
