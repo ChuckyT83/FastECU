@@ -332,6 +332,9 @@ private slots:
     }
 };
 int main(int argc, char **argv) {
+    // Preserve the last test name even if the process terminates abnormally.
+    std::setvbuf(stdout,nullptr,_IONBF,0);
+    std::setvbuf(stderr,nullptr,_IONBF,0);
     std::fprintf(stderr,"Safety harness phase: QApplication construction\n");
     QApplication app(argc,argv);
     app.setAttribute(Qt::AA_Use96Dpi,true);
