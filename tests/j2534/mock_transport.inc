@@ -11,13 +11,13 @@ static std::vector<MockReadResult> mockReads;
 static unsigned mockReadIndex = 0;
 static unsigned long mockFiveSize = 2;
 static int mockFivePointer = 0;
-static unsigned long mockDelay = 0;
+static unsigned long mockDelay = 0, mockLastPin = 0, mockLastVoltage = 0, mockFirstVoltage = 0;
 static unsigned char mockPayload[PASSTHRU_MSG_DATA_SIZE] = {};
 EXPORT void PT_CALL MockTransportReset() {
     mockWriteStatus = mockPeriodicStatus = mockStopStatus = mockIoctlStatus = 0;
     mockWriteCount = 1; std::fill(mockCalls, mockCalls + 6, 0);
     mockLastTimeout = mockLastSize = mockLastFlags = mockLastChannel = 0;
-    mockReads.clear(); mockReadIndex = 0; mockDelay = 0; mockFiveSize = 2; mockFivePointer = 0;
+    mockReads.clear(); mockReadIndex = 0; mockDelay = 0; mockLastPin = mockLastVoltage = mockFirstVoltage = 0; mockFiveSize = 2; mockFivePointer = 0;
 }
 EXPORT void PT_CALL MockTransportDelay(unsigned long ms) { mockDelay = ms; }
 EXPORT unsigned long PT_CALL MockTransportByte(int i) { return i>=0 && i<PASSTHRU_MSG_DATA_SIZE ? mockPayload[i] : 0; }
@@ -30,6 +30,9 @@ EXPORT unsigned long PT_CALL MockTransportValue(int index) {
     if (index == 6) return mockLastTimeout;
     if (index == 7) return mockLastSize;
     if (index == 8) return mockLastFlags;
+    if (index == 10) return mockLastPin;
+    if (index == 11) return mockLastVoltage;
+    if (index == 12) return mockFirstVoltage;
     return mockLastChannel;
 }
 static long mockWrite(unsigned long channel, const void *data, unsigned long *count, unsigned long timeout) {
@@ -64,4 +67,4 @@ static long mockIoctl(unsigned long channel, unsigned long op, void *out) {
     }
     return mockIoctlStatus;
 }
-static long mockVoltage(unsigned long device) { ++mockCalls[5]; mockLastChannel = device; return mockIoctlStatus; }
+static long mockVoltage(unsigned long device, unsigned long pin, unsigned long voltage) { if (!mockCalls[5]) mockFirstVoltage = voltage; ++mockCalls[5]; mockLastChannel = device; mockLastPin = pin; mockLastVoltage = voltage; return mockIoctlStatus; }

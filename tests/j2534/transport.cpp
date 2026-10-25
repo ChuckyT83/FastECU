@@ -169,6 +169,8 @@ private slots:
     }
     void disconnectedAndRetry() {
         port->close_j2534_serial_port();
+        QCOMPARE(port->write_serial_data(message),QByteArray(1,char(STATUS_ERROR)));
+        QCOMPARE(port->write_serial_data_echo_check(message),QByteArray(1,char(STATUS_ERROR)));
         QCOMPARE(port->write_j2534_data(message),STATUS_ERROR); QVERIFY(port->read_j2534_data(0).isEmpty());
         QCOMPARE(value(0),0UL); QCOMPARE(value(1),0UL);
         QCOMPARE(port->init_j2534_connection(),STATUS_SUCCESS);
@@ -200,6 +202,16 @@ private slots:
         QCOMPARE(port->line_end_check_1_toggled(port->requestToSendDisabled),STATUS_ERROR);
         QCOMPARE(port->line_end_check_2_toggled(port->dataTerminalDisabled),STATUS_ERROR);
         QCOMPARE(value(5),2UL); QCOMPARE(value(9),41UL);
+    }
+    void voltagePulseFailureStillAttemptsOff() {
+        other(0,0,ERR_FAILED);
+        QCOMPARE(port->pulse_lec_1_line(0),STATUS_ERROR);
+        QCOMPARE(value(5),2UL); QCOMPARE(value(9),41UL);
+        QCOMPARE(value(10),ulong(J1962_PIN_11));
+        QCOMPARE(value(12),12000UL); QCOMPARE(value(11),static_cast<ulong>(-2));
+        QCOMPARE(port->pulse_lec_2_line(0),STATUS_ERROR);
+        QCOMPARE(value(5),4UL); QCOMPARE(value(10),ulong(J1962_PIN_9));
+        QCOMPARE(value(11),static_cast<ulong>(-2));
     }
     void invalidChannelIoctlStopsFurtherUse() {
         other(0,0,ERR_INVALID_CHANNEL_ID);

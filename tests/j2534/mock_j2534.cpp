@@ -51,6 +51,6 @@ long J2534::PassThruReadMsgs(unsigned long id, PASSTHRU_MSG* m, unsigned long *n
 long J2534::PassThruWriteMsgs(unsigned long id, const PASSTHRU_MSG* m, unsigned long* n, unsigned long t) { return mockWrite(id,m,n,t); }
 long J2534::PassThruStartPeriodicMsg(unsigned long id, const PASSTHRU_MSG*, unsigned long* n, unsigned long) { return mockPeriodic(id,n); }
 long J2534::PassThruStopPeriodicMsg(unsigned long id, unsigned long) { return mockStop(id); }
-long J2534::PassThruSetProgrammingVoltage(unsigned long id, unsigned long, unsigned long) { return mockVoltage(id); }
+long J2534::PassThruSetProgrammingVoltage(unsigned long id, unsigned long pin, unsigned long v) { return mockVoltage(id,pin,v); }
 bool J2534::get_is_tx_done() { return false; }
 void J2534::handle_error(QSerialPort::SerialPortError) {}

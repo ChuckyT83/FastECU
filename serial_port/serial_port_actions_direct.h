@@ -192,7 +192,7 @@ private:
     bool periodicActive = false;
     TransportState transportState = TransportState::Idle;
     long transportStatus = STATUS_NOERROR;
-    int transport_failure(long status, const char *operation);
+    int transport_failure(long status, const char *operation, bool driverError = true);
     bool valid_message_size(int size) const;
 
     enum rx_msg_type {

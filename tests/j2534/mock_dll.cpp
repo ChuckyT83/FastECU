@@ -34,7 +34,7 @@ EXPORT long PT_CALL PassThruStartPeriodicMsg(unsigned long c, const void*, unsig
 EXPORT long PT_CALL PassThruStopPeriodicMsg(unsigned long c, unsigned long) { return mockStop(c); }
 EXPORT long PT_CALL PassThruStartMsgFilter(unsigned long id, unsigned long, const void*, const void*, const void*, unsigned long *filter) { *filter = 9; return record("filter", id); }
 EXPORT long PT_CALL PassThruStopMsgFilter(unsigned long, unsigned long) { return 0; }
-EXPORT long PT_CALL PassThruSetProgrammingVoltage(unsigned long d, unsigned long, unsigned long) { return mockVoltage(d); }
+EXPORT long PT_CALL PassThruSetProgrammingVoltage(unsigned long d, unsigned long pin, unsigned long v) { return mockVoltage(d,pin,v); }
 EXPORT long PT_CALL PassThruReadVersion(unsigned long id, char *fw, char *dll, char *api) {
     if (id != device) return ERR_INVALID_DEVICE_ID;
     long status = record("version", id);
