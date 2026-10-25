@@ -51,7 +51,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2019_64
-          archives: qtbase qtserialport qtwebsockets
           modules: qtremoteobjects
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
@@ -59,11 +58,23 @@ jobs:
       - name: Build and run native offline tests
         shell: pwsh
         run: ./tests/j2534/run-windows.ps1
+      - name: Report installer failures
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path aqtinstall.log) {
+            $tail = (Get-Content aqtinstall.log | Select-String '(?i)error|exception|archives|modules|available' | Select-Object -Last 12) -join "`n"
+            if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+            $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::notice title=Qt installer diagnostics::$tail"
+          }
       - name: Retain toolchain, build, and test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: j2534-windows-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build-j2534/logs/
+          path: |
+            build-j2534/logs/
+            aqtinstall.log
           if-no-files-found: warn
           retention-days: 14
