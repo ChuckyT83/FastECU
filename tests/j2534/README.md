@@ -91,3 +91,6 @@ disable and destruction, without adding references using `GetModuleHandleA`.
 The Linux bridge mirrors these assertions (34 checks after Task 003B additions).
 Native integration cases additionally cover valid zero-valued handles and
 Disconnect/Close failure followed by retry.
+
+Task 003B native x64 results and the passing run are recorded in
+[`docs/task-003b-windows-validation.md`](../../docs/task-003b-windows-validation.md).
