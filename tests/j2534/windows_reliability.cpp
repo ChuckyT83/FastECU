@@ -9,11 +9,13 @@ class J2534ReliabilityTest : public QObject {
     using Reset = void (PT_CALL *)();
     using SetFailure = void (PT_CALL *)(const char *);
     using SetMetadata = void (PT_CALL *)(int);
+    using SetHandles = void (PT_CALL *)(unsigned long, unsigned long);
     using Trace = const char *(PT_CALL *)();
     Reset reset = nullptr;
     SetFailure setFailure = nullptr;
     SetMetadata setMetadata = nullptr;
     Trace trace = nullptr;
+    SetHandles setHandles = nullptr;
     QString path;
     void configure(SerialPortActionsDirect &port, int p = ISO15765) {
         port.j2534->setDllName(path.toLocal8Bit().constData());
@@ -31,7 +33,8 @@ private slots:
         setFailure = reinterpret_cast<SetFailure>(mock.resolve("MockSetFailure"));
         setMetadata = reinterpret_cast<SetMetadata>(mock.resolve("MockSetMetadata"));
         trace = reinterpret_cast<Trace>(mock.resolve("MockTrace"));
-        QVERIFY(reset && setFailure && setMetadata && trace);
+        setHandles = reinterpret_cast<SetHandles>(mock.resolve("MockSetHandles"));
+        QVERIFY(reset && setFailure && setMetadata && trace && setHandles);
     }
     void init() { reset(); }
     void successAndRepeatedCleanup() {
@@ -85,6 +88,34 @@ private slots:
         char value[2] = {'x', 'y'};
         QVERIFY(!port.get_serial_num(value, 1));
         QCOMPARE(value[0], '\0'); QCOMPARE(value[1], 'y');
+    }
+    void zeroHandlesAreOwned() {
+        SerialPortActionsDirect port; configure(port);
+        setHandles(0, 0);
+        QCOMPARE(port.init_j2534_connection(), STATUS_SUCCESS);
+        QVERIFY(port.J2534_open_ok && port.J2534_connect_ok);
+        port.close_j2534_serial_port();
+        QCOMPARE(calls().count("disconnect:0;close:0;"), 1);
+    }
+    void cleanupFailures_data() {
+        QTest::addColumn<QString>("operation");
+        QTest::newRow("disconnect") << QString("disconnect");
+        QTest::newRow("close") << QString("close");
+    }
+    void cleanupFailures() {
+        QFETCH(QString, operation);
+        SerialPortActionsDirect port; configure(port);
+        QCOMPARE(port.init_j2534_connection(), STATUS_SUCCESS);
+        setFailure(operation.toLatin1().constData());
+        port.close_j2534_serial_port();
+        QVERIFY(!port.J2534_init_ok && !port.J2534_open_ok && !port.J2534_connect_ok);
+        QVERIFY(!port.j2534->valid());
+        QCOMPARE(calls().count("disconnect:99;"), 1);
+        QCOMPARE(calls().count("close:41;"), 1);
+        port.close_j2534_serial_port();
+        QCOMPARE(calls().count("close:41;"), 1);
+        setFailure("");
+        QCOMPARE(port.init_j2534_connection(), STATUS_SUCCESS);
     }
     void publicSelectionUsesDllPath() {
         SerialPortActionsDirect port;

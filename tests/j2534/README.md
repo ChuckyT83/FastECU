@@ -65,3 +65,29 @@ It never calls `open_serial_port`/enumeration and therefore never touches adapte
 The control `QLibrary` deliberately holds a reference during integration tests;
 the standalone loader test tests unloading without that reference. Windows x86
 stdcall decorated exports and real driver behavior remain unvalidated.
+
+## Task 003B Windows runner
+
+The committed `.github/workflows/j2534-windows.yml` runs the native x64 targets on
+`windows-2022` using MSVC 2022 and the ABI-compatible Qt 5.15.2 MSVC 2019 x64
+binaries. It runs on pushes affecting J2534 code/tests/workflow on the dedicated
+`fix/j2534-initialization-reliability` branch, or by manual dispatch. It never
+runs the FastECU application or scans the registry/serial ports.
+
+For local Windows reproduction, enter an x64 MSVC developer shell with Qt 5's
+`bin` directory in PATH, then run PowerShell 7 from the checkout:
+
+```powershell
+./tests/j2534/run-windows.ps1
+```
+
+The script compiles both mock DLLs and the actual production Windows wrapper and
+connection code. It records compiler versions, qmake configuration, build output,
+loader assertion counts, and QtTest text/JUnit reports in `build-j2534/logs`.
+Any native command failure terminates the script; the workflow uploads available
+logs even on failure. `build-j2534` is ignored by the existing `*build-*` rule.
+The Windows loader now checks actual module presence after partial-load failure,
+disable and destruction, without adding references using `GetModuleHandleA`.
+The Linux bridge mirrors these assertions (34 checks after Task 003B additions).
+Native integration cases additionally cover valid zero-valued handles and
+Disconnect/Close failure followed by retry.

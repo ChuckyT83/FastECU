@@ -17,8 +17,9 @@ static long record(const char *op, unsigned long id) {
     trace += std::string(op) + ":" + std::to_string(id) + ";";
     return failingOperation == op ? ERR_FAILED : failure;
 }
-EXPORT void PT_CALL MockReset() { failure = 0; failingOperation.clear(); trace.clear(); metadata = 0; }
+EXPORT void PT_CALL MockReset() { failure = 0; failingOperation.clear(); trace.clear(); metadata = 0; device = 41; channel = 99; }
 EXPORT void PT_CALL MockSetFailure(const char *op) { failingOperation = op; }
+EXPORT void PT_CALL MockSetHandles(unsigned long d, unsigned long c) { device = d; channel = c; }
 EXPORT void PT_CALL MockSetMetadata(int mode) { metadata = mode; }
 EXPORT const char * PT_CALL MockTrace() { return trace.c_str(); }
 EXPORT void PT_CALL MockFail(long code) { failure = code; }

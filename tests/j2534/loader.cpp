@@ -5,6 +5,15 @@
 #if !defined(_WIN32)
 #include <dlfcn.h>
 #endif
+static bool moduleLoaded(const char *path) {
+#if defined(_WIN32)
+    return GetModuleHandleA(path) != nullptr; // does not add a loader reference
+#else
+    void *handle = dlopen(path, RTLD_NOLOAD | RTLD_NOW);
+    if (handle) dlclose(handle);
+    return handle != nullptr;
+#endif
+}
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #condition); return 1; } ++checks; } while (0)
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
@@ -17,6 +26,7 @@ int main(int argc, char **argv) {
     driver.setDllName(argv[2]);
     CHECK(!driver.init()); CHECK(!driver.valid());
     CHECK(strstr(driver.getLastError(), "PassThruIoctl") != nullptr);
+    CHECK(!moduleLoaded(argv[2]));
     driver.setDllName(argv[1]);
     CHECK(driver.init()); CHECK(driver.valid());
     HINSTANCE control = LoadLibraryA(argv[1]);
@@ -42,11 +52,7 @@ int main(int argc, char **argv) {
     CHECK(driver.PassThruReadVersion(api, dll, fw, device) == STATUS_NOERROR);
     CHECK(strcmp(api, "04.04") == 0 && strcmp(dll, "1.2.3") == 0 && strcmp(fw, "9.8.7") == 0);
     driver.disable(); CHECK(!driver.valid());
-#if !defined(_WIN32)
-    // No other references are retained: the production disable must dlclose.
-    void *retained = dlopen(argv[1], RTLD_NOLOAD | RTLD_NOW);
-    CHECK(retained == nullptr);
-#endif
+    CHECK(!moduleLoaded(argv[1]));
     driver.disable(); CHECK(!driver.valid());
     CHECK(driver.init()); CHECK(driver.valid()); // reload and resolve pointers
     driver.disable();
@@ -55,9 +61,6 @@ int main(int argc, char **argv) {
     driver.setDllName(nullptr); CHECK(!driver.init());
     driver.setDllName(""); CHECK(!driver.init());
     { J2534 scoped; scoped.setDllName(argv[1]); CHECK(scoped.init()); }
-#if !defined(_WIN32)
-    retained = dlopen(argv[1], RTLD_NOLOAD | RTLD_NOW);
-    CHECK(retained == nullptr); // destructor unloads without needing OP20PT32_USE_LIB
-#endif
+    CHECK(!moduleLoaded(argv[1])); // destructor unloads the actual native DLL
     printf("Loader regression checks passed: %d\n", checks);
 }

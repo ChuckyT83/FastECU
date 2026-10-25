@@ -240,7 +240,7 @@ long J2534::LoadJ2534DLL(const char* szDLL)
     strcpy(libPath,pathPtr);
     strcat(libPath,"/Contents/Frameworks");
     chdir(libPath); // change to this dir so J2534 .dylib can find any other needed dylibs in the same dir
-    strcat(libPath,"/"");
+    strcat(libPath,"/");
     strcat(libPath,szDLL);
 
     CFRelease(appUrlRef);
