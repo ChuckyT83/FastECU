@@ -990,6 +990,12 @@ int MainWindow::can_listener()
 
 int MainWindow::start_ecu_operations(QString cmd_type)
 {
+    // Reject before the legacy UI prelude can make unchecked QtRO calls.
+    if (SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name) &&
+        !serial->isDirectConnection()) {
+        QMessageBox::warning(this, tr("ECU Operation"), "Remote SH7058 operations are disabled until explicit communication results are supported.");
+        return 0;
+    }
     set_realtime_state(false);
     toggle_realtime();
 

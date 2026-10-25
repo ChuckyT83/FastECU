@@ -395,6 +395,25 @@ private slots:
         QCOMPARE(port.writes.size(),10);
         QCOMPARE(port.writes.last(),diagnosticRequest(QByteArray::fromHex("1002")));
     }
+    void sessionAmbiguity_data() {QTest::addColumn<bool>("both");QTest::newRow("both-accepted")<<true;QTest::newRow("neither-accepted")<<false;}
+    void sessionAmbiguity() {
+        QFETCH(bool,both); diagnosticReplies(); auto original=port.respond;
+        port.respond=[&](const QByteArray &a){
+            if(uint8_t(a.at(4))==0x10) return diagnosticResponse(both ? QByteArray::fromHex("50")+a.mid(5) : QByteArray::fromHex("7f1012"));
+            return original(a);
+        };
+        QCOMPARE(module->connect_bootloader(),1); QCOMPARE(port.writes.size(),7);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Malformed));
+    }
+    void optionalMetadata_data() {QTest::addColumn<bool>("negative");QTest::newRow("unsupported")<<true;QTest::newRow("no-response")<<false;}
+    void optionalMetadata() {
+        QFETCH(bool,negative); diagnosticReplies(); auto original=port.respond;
+        port.respond=[&](const QByteArray &a){const auto sid=uint8_t(a.at(4));
+            if(sid==0xAA || sid==9) return negative ? diagnosticResponse(QByteArray::fromHex("7f")+a.mid(4,1)+QByteArray::fromHex("12")) : QByteArray();
+            return original(a);
+        };
+        QCOMPARE(module->connect_bootloader(),0); QCOMPARE(port.writes.size(),10);
+    }
     void readOutcome_data() {
         QTest::addColumn<int>("state");
         using S=CommunicationResult::State;
@@ -542,7 +561,18 @@ private slots:
         QFETCH(int,length); QFETCH(uint,destination); QFETCH(bool,valid);
         QByteArray output; const QByteArray input(length,'K');
         QCOMPARE(module->prepare_kernel(input,destination,output),valid);
-        if(valid) { QCOMPARE(output.size(),((length+127)/128)*128); QVERIFY(!output.isEmpty()); QCOMPARE(output.size()%128,0); }
+        if(valid) {
+            QCOMPARE(output.size(),((length+127)/128)*128); QVERIFY(!output.isEmpty()); QCOMPARE(output.size()%128,0);
+            // Captured from actual Task006A upload_kernel using only synthetic
+            // K-filled files; concatenated nonempty transfer payloads.
+            const QMap<int,QByteArray> expected={
+                {4,"422b4f871c3ed2192020620437fb242078df0ceebf6b45d81fbf0a2c87e4882f"},
+                {128,"627d8c2cf046b7b2ca50d4635b9a2e40ce32cf90ea5ac80d64291c7a7a31d3f6"},
+                {129,"8c3d1e13522a7f4509a9778248ec44537f25fbc0cba8569649f0c7371bf3910f"},
+                {6428,"26aef047094d69c844ae0a90db8db478821435a2bae9c8c0092777ef0cabcb1b"},
+                {0x9000,"63a61a52a372f1579779f139beee42f80148dddd6e3efa4d03e68516bf578c1c"}};
+            QCOMPARE(SubaruSH7058Safety::fingerprint(output).toHex(),expected.value(length));
+        }
         else QVERIFY(output.isEmpty());
         QVERIFY(port.writes.isEmpty());
     }

@@ -51,7 +51,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2019_64
-          modules: qtremoteobjects
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false

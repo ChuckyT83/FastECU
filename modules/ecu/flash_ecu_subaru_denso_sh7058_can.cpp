@@ -137,7 +137,9 @@ QByteArray FlashEcuSubaruDensoSH7058Can::receive_response(uint16_t timeout, bool
         if (!communication.ok()) communication.detail = "Malformed, unrelated or rejected ECU response";
     }
     if (communication.state == CommState::Success || communication.state == CommState::Rejected) return communication.bytes;
-    if (communication.state != CommState::Timeout) emit LOG_E(communication.detail, true, true);
+    if (communication.state == CommState::Timeout)
+        emit LOG_D(QString("No ECU response within %1 ms").arg(timeout), true, true);
+    else emit LOG_E(communication.detail + (communication.hasStatus ? QString(" (J2534 status 0x%1)").arg(communication.status,0,16) : QString()), true, true);
     return {};
 }
 
