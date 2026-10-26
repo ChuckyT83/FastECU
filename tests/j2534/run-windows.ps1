@@ -137,3 +137,6 @@ try {
 } finally {
     Pop-Location
 }
+# An accepted diagnostic refusal/no-driver exit is not a failed test job.
+# Unexpected native statuses and assertions throw before reaching this point.
+exit 0
