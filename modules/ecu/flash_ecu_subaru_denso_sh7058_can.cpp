@@ -1,6 +1,7 @@
 #include "flash_ecu_subaru_denso_sh7058_can.h"
 #include "serial_port_actions.h"
 #include "subaru_sh7058_safety.h"
+#include "subaru_sh7058_kernel_layout.h"
 
 FlashEcuSubaruDensoSH7058Can::FlashEcuSubaruDensoSH7058Can(SerialPortActions *serial, FileActions::EcuCalDefStructure *ecuCalDef, QString cmd_type, QWidget *parent)
     : QDialog(parent)
@@ -804,10 +805,10 @@ bool FlashEcuSubaruDensoSH7058Can::prepare_kernel(const QByteArray &input, uint3
     encrypted.clear();
     const auto *map = SubaruSH7058Safety::memoryMap(ecuCalDef->McuType);
     if (!map || !map->kblocks || input.size() < 4) return false;
-    const uint64_t length = (uint64_t(input.size()) + 127) & ~uint64_t(127);
     const auto &ram = map->kblocks[0];
-    if (destination < ram.start || destination % 4 ||
-        uint64_t(destination) + length > uint64_t(ram.start) + ram.len) return false;
+    const auto layout = SubaruSH7058::KernelLayout::create(input.size(), destination, ram.start, ram.len);
+    if (!layout.valid()) return false;
+    const uint32_t length = layout.preparedSize();
     QByteArray padded = input;
     padded.append(QByteArray(int(length) - padded.size(), '\0'));
     padded.chop(4);

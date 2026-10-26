@@ -1,5 +1,9 @@
 # SH7058 offline safety regression
 
+For the separately isolated kernel state-machine experiment, see
+[KERNEL_OFFLINE.md](KERNEL_OFFLINE.md). Its simulated acknowledgements do not
+establish an ECU upload contract or enable the production uploader.
+
 This QtTest target compiles the production SH7058 CAN module, its generated UI,
 SH7xxx checksum implementation and shared preflight helper. Only the serial
 facade and NRC diagnostic formatting are replaced at link/compile time. The

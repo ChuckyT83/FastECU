@@ -77,6 +77,15 @@ try {
         Invoke-Logged -Name 'build-facade' -File 'nmake.exe' -Arguments @('/NOLOGO')
         Invoke-Logged -Name 'facade-tests' -File (Join-Path $facadeBuild 'subaru-facade.exe') -Arguments @('-o', "$(Join-Path $logs 'facade-results.txt'),txt", '-o', "$(Join-Path $logs 'facade-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $kernelBuild = Join-Path $build 'kernel-offline'
+    New-Item -ItemType Directory -Force $kernelBuild | Out-Null
+    Push-Location $kernelBuild
+    try {
+        # Qt Core only; no GUI, J2534 loader, vendor DLL or serial backend.
+        Invoke-Logged -Name 'qmake-kernel-offline' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/kernel_transfer.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-kernel-offline' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'kernel-offline-tests' -File (Join-Path $kernelBuild 'subaru-kernel-offline.exe') -Arguments @('-o', "$(Join-Path $logs 'kernel-offline-results.txt'),txt", '-o', "$(Join-Path $logs 'kernel-offline-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
@@ -84,6 +93,7 @@ try {
         ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
         ('Subaru safety: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
         ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Synthetic kernel model: ' + ((Get-Content (Join-Path $logs 'kernel-offline-results.txt') | Select-String 'Totals:') -join ' '))
         ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
     ) -join '; '

@@ -143,6 +143,7 @@ SOURCES += \
     verticallabel.cpp
 
 HEADERS += \
+    modules/ecu/subaru_sh7058_kernel_layout.h \
     calibration_maps.h \
     calibration_treewidget.h \
     cipher.h \

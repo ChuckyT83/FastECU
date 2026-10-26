@@ -1,4 +1,5 @@
 #include <QtTest>
+#include "../../modules/ecu/subaru_sh7058_kernel_layout.h"
 #include <cstdio>
 #include <QMessageBox>
 #include <QCloseEvent>
@@ -578,6 +579,15 @@ private slots:
         QCOMPARE(module->prepare_kernel(input,destination,output),valid);
         if(valid) {
             QCOMPARE(output.size(),((length+127)/128)*128); QVERIFY(!output.isEmpty()); QCOMPARE(output.size()%128,0);
+            const auto layout=SubaruSH7058::KernelLayout::create(length,destination,0xFFFF3000,0x9000);
+            QVERIFY(layout.valid()); QCOMPARE(layout.preparedSize(),uint32_t(output.size()));
+            QByteArray reassembled;
+            for(uint32_t i=0;i<layout.blockCount();++i) {
+                SubaruSH7058::KernelLayout::Block block; QVERIFY(layout.block(i,block));
+                QCOMPARE(block.length,128u); reassembled+=output.mid(int(block.offset),int(block.length));
+            }
+            QCOMPARE(reassembled,output);
+            SubaruSH7058::KernelLayout::Block extra; QVERIFY(!layout.block(layout.blockCount(),extra));
             // Captured from actual Task006A upload_kernel using only synthetic
             // K-filled files; concatenated nonempty transfer payloads.
             const QMap<int,QByteArray> expected={
@@ -591,8 +601,13 @@ private slots:
         else QVERIFY(output.isEmpty());
         QVERIFY(port.writes.isEmpty());
     }
+    void kernelUploadGated_data() {
+        QTest::addColumn<int>("size");
+        for(int n : {4,128,129,6428,0x9000}) QTest::newRow(qPrintable(QString::number(n)))<<n;
+    }
     void kernelUploadGated() {
-        QTemporaryFile file; QVERIFY(file.open()); QCOMPARE(file.write(QByteArray(6428,'K')),qint64(6428));file.flush();file.close();
+        QFETCH(int,size);
+        QTemporaryFile file; QVERIFY(file.open()); QCOMPARE(file.write(QByteArray(size,'K')),qint64(size));file.flush();file.close();
         QCOMPARE(module->upload_kernel(file.fileName(),0xFFFF3000),1);
         QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
         QVERIFY(port.writes.isEmpty());

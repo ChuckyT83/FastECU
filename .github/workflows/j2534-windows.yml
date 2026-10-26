@@ -9,6 +9,7 @@ on:
       - 'tests/subaru/**'
       - 'modules/ecu/flash_ecu_subaru_denso_sh7058_can.*'
       - 'modules/ecu/subaru_sh7058_safety.h'
+      - 'modules/ecu/subaru_sh7058_kernel_layout.h'
       - 'modules/checksum/checksum_ecu_subaru_denso_sh7xxx.*'
       - 'file_actions.*'
       - 'mainwindow.cpp'
