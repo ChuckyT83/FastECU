@@ -12,6 +12,8 @@ SerialPortActionsDirect::SerialPortActionsDirect(QObject *parent)
     , serial(new QSerialPort(this))
 {
     j2534 = new J2534();
+    const auto tracePath = QCoreApplication::instance() ? QCoreApplication::instance()->property("j2534TracePath").toString() : QString();
+    if (!tracePath.isEmpty()) trace.start(tracePath);
 #if defined Q_OS_UNIX
     QObject::connect(j2534, &J2534::LOG_E, this, &SerialPortActionsDirect::LOG_E);
     QObject::connect(j2534, &J2534::LOG_W, this, &SerialPortActionsDirect::LOG_W);
@@ -79,7 +81,7 @@ int SerialPortActionsDirect::change_port_speed(QString portSpeed)
             scl.NumOfParams = 1;
             scp[0].Value = baudrate;
             scl.ConfigPtr = scp;
-            const long status = j2534->PassThruIoctl(chanID,SET_CONFIG,&scl,NULL);
+            const long status = PassThruIoctl(chanID,SET_CONFIG,&scl,NULL);
             if (status == STATUS_NOERROR)
             {
                 emit LOG_D("Baudrate set to " + portSpeed + " OK", true, true);
@@ -113,7 +115,7 @@ QByteArray SerialPortActionsDirect::five_baud_init(QByteArray output)
         unsigned char responseBytes[20] = {};
         SBYTE_ARRAY inputMsg = {1, input};
         SBYTE_ARRAY outputMsg = {sizeof(responseBytes), responseBytes};
-        const long status = j2534->PassThruIoctl(chanID, FIVE_BAUD_INIT, &inputMsg, &outputMsg);
+        const long status = PassThruIoctl(chanID, FIVE_BAUD_INIT, &inputMsg, &outputMsg);
         if (status != STATUS_NOERROR)
         {
             transport_failure(status, "FIVE_BAUD_INIT");
@@ -203,7 +205,7 @@ int SerialPortActionsDirect::fast_init(QByteArray output)
         /* Set timeout to 350ms before init */
         accurate_delay(350);
 
-        result = j2534->PassThruIoctl(chanID, FAST_INIT, &InputMsg, &OutputMsg);
+        result = PassThruIoctl(chanID, FAST_INIT, &InputMsg, &OutputMsg);
         if (result)
         {
             reportJ2534Error(result, "FAST_INIT");
@@ -236,7 +238,7 @@ int SerialPortActionsDirect::clear_rx_buffer()
 {
     if (!J2534_open_ok || !J2534_connect_ok)
         return transport_failure(ERR_INVALID_CHANNEL_ID, "CLEAR_RX_BUFFER (disconnected)", false);
-    const long status = j2534->PassThruIoctl(chanID, CLEAR_RX_BUFFER, NULL, NULL);
+    const long status = PassThruIoctl(chanID, CLEAR_RX_BUFFER, NULL, NULL);
     if (status != STATUS_NOERROR)
         return transport_failure(status, "CLEAR_RX_BUFFER");
     return STATUS_SUCCESS;
@@ -246,7 +248,7 @@ int SerialPortActionsDirect::clear_tx_buffer()
 {
     if (!J2534_open_ok || !J2534_connect_ok)
         return transport_failure(ERR_INVALID_CHANNEL_ID, "CLEAR_TX_BUFFER (disconnected)", false);
-    const long status = j2534->PassThruIoctl(chanID, CLEAR_TX_BUFFER, NULL, NULL);
+    const long status = PassThruIoctl(chanID, CLEAR_TX_BUFFER, NULL, NULL);
     if (status != STATUS_NOERROR)
         return transport_failure(status, "CLEAR_TX_BUFFER");
     return STATUS_SUCCESS;
@@ -283,7 +285,7 @@ int SerialPortActionsDirect::line_end_check_1_toggled(int state)
     {
         if (use_openport2_adapter)
         {
-            const long status = j2534->PassThruSetProgrammingVoltage(devID, J1962_PIN_11, 12000);
+            const long status = PassThruSetProgrammingVoltage(devID, J1962_PIN_11, 12000);
 #if defined Q_OS_UNIX
             delay(1);
 #endif
@@ -300,7 +302,7 @@ int SerialPortActionsDirect::line_end_check_1_toggled(int state)
     {
         if (use_openport2_adapter)
         {
-            if (!checkJ2534Status(j2534->PassThruSetProgrammingVoltage(devID, J1962_PIN_11, -2), "PassThruSetProgrammingVoltage"))
+            if (!checkJ2534Status(PassThruSetProgrammingVoltage(devID, J1962_PIN_11, -2), "PassThruSetProgrammingVoltage"))
                 return STATUS_ERROR;
         }
         else
@@ -321,7 +323,7 @@ int SerialPortActionsDirect::line_end_check_2_toggled(int state)
     {
         if (use_openport2_adapter)
         {
-            const long status = j2534->PassThruSetProgrammingVoltage(devID, J1962_PIN_9, 12000);
+            const long status = PassThruSetProgrammingVoltage(devID, J1962_PIN_9, 12000);
 #if defined Q_OS_UNIX
             delay(1);
 #endif
@@ -338,7 +340,7 @@ int SerialPortActionsDirect::line_end_check_2_toggled(int state)
     {
         if (use_openport2_adapter)
         {
-            if (!checkJ2534Status(j2534->PassThruSetProgrammingVoltage(devID, J1962_PIN_9, -2), "PassThruSetProgrammingVoltage"))
+            if (!checkJ2534Status(PassThruSetProgrammingVoltage(devID, J1962_PIN_9, -2), "PassThruSetProgrammingVoltage"))
                 return STATUS_ERROR;
         }
         else
@@ -410,12 +412,12 @@ QStringList SerialPortActionsDirect::check_j2534_devices(QMap<QString, QString> 
             emit LOG_D(j2534DllName + " init successfull", true, true);
             //0 means no error
             unsigned long probeDeviceID = 0;
-            if (!j2534->PassThruOpen(NULL, &probeDeviceID))
+            if (!PassThruOpen(NULL, &probeDeviceID))
             {
                 emit LOG_D("Successfully opened " + QString::number(probeDeviceID) + " / " + vendor + " / " + j2534DllName, true, true);
                 j2534_devices.append(vendor);
                 j2534DeviceFound = true;
-                checkJ2534Status(j2534->PassThruClose(probeDeviceID), "PassThruClose probe");
+                checkJ2534Status(PassThruClose(probeDeviceID), "PassThruClose probe");
             }
             else
                 emit LOG_E(QString::number(probeDeviceID) + " / " + vendor + " device not connected", true, true);
@@ -597,14 +599,15 @@ void SerialPortActionsDirect::close_j2534_serial_port()
     // Resource ownership is independent of whether initialization completed.
     // Close each acquired resource once, in reverse order, even after an error.
     if (J2534_connect_ok)
-        checkJ2534Status(j2534->PassThruDisconnect(chanID), "PassThruDisconnect");
+        checkJ2534Status(PassThruDisconnect(chanID), "PassThruDisconnect");
     if (J2534_open_ok)
-        checkJ2534Status(j2534->PassThruClose(devID), "PassThruClose");
+        checkJ2534Status(PassThruClose(devID), "PassThruClose");
 #if defined Q_OS_UNIX
     j2534->close_serial_port();
 #else
     j2534->disable();
 #endif
+    try { if(trace.enabled()) trace.record("dll_unload",{{"requested",true}}); } catch (...) {}
     use_openport2_adapter = false;
     J2534_open_ok = false;
     J2534_get_version_ok = false;
@@ -960,6 +963,8 @@ bool SerialPortActionsDirect::valid_message_size(int size) const
 
 int SerialPortActionsDirect::transport_failure(long status, const char *operation, bool driverError)
 {
+    try { if(trace.enabled()) trace.record("transport_failure",{{"status",qint64(status)},
+        {"status_origin",driverError ? "driver" : "host_validation"},{"api_operation",QString::fromLatin1(operation)}}); } catch (...) {}
     transportState = TransportState::Error;
     transportStatus = status;
     if (driverError)
@@ -993,7 +998,7 @@ int SerialPortActionsDirect::write_j2534_data(QByteArray output)
     txmsg.DataSize = static_cast<unsigned long>(output.size());
     memcpy(txmsg.Data, output.constData(), static_cast<size_t>(output.size()));
     unsigned long count = 1;
-    const long status = j2534->PassThruWriteMsgs(chanID, &txmsg, &count, 100);
+    const long status = PassThruWriteMsgs(chanID, &txmsg, &count, 100);
     communicationDriverStatus = status;
     communicationHasDriverStatus = true;
     // One atomic message is submitted; never retry an uncertain write or split
@@ -1020,7 +1025,7 @@ int SerialPortActionsDirect::send_periodic_j2534_data(QByteArray output, int tim
     txmsg.DataSize = static_cast<unsigned long>(output.size());
     memcpy(txmsg.Data, output.constData(), static_cast<size_t>(output.size()));
     unsigned long id = 0;
-    const long status = j2534->PassThruStartPeriodicMsg(chanID, &txmsg, &id, static_cast<unsigned long>(timeout));
+    const long status = PassThruStartPeriodicMsg(chanID, &txmsg, &id, static_cast<unsigned long>(timeout));
     if (status != STATUS_NOERROR)
         return transport_failure(status, "PassThruStartPeriodicMsg");
     msgID = id; // zero is valid when the API returned success
@@ -1037,7 +1042,7 @@ int SerialPortActionsDirect::stop_periodic_j2534_data()
         return transport_failure(ERR_INVALID_CHANNEL_ID, "PassThruStopPeriodicMsg (disconnected)", false);
     if (!periodicActive)
         return transport_failure(ERR_INVALID_MSG_ID, "PassThruStopPeriodicMsg (no active message)", false);
-    const long status = j2534->PassThruStopPeriodicMsg(chanID, msgID);
+    const long status = PassThruStopPeriodicMsg(chanID, msgID);
     if (status != STATUS_NOERROR)
         return transport_failure(status, "PassThruStopPeriodicMsg");
     periodicActive = false;
@@ -1073,7 +1078,7 @@ QByteArray SerialPortActionsDirect::read_j2534_data(unsigned long timeout)
         unsigned long count = 1;
         const auto elapsed = static_cast<unsigned long>(timer.elapsed());
         const unsigned long remaining = elapsed >= timeout ? 0 : timeout - elapsed;
-        const long status = j2534->PassThruReadMsgs(chanID, &msg, &count, remaining);
+        const long status = PassThruReadMsgs(chanID, &msg, &count, remaining);
         communicationDriverStatus = status;
         communicationHasDriverStatus = true;
         const bool noMessage = status == ERR_TIMEOUT || status == ERR_BUFFER_EMPTY;
@@ -1117,7 +1122,7 @@ int SerialPortActionsDirect::set_j2534_ioctl(unsigned long parameter, int value)
         return transport_failure(ERR_INVALID_CHANNEL_ID, "SET_CONFIG (disconnected)", false);
     SCONFIG config = {parameter, static_cast<unsigned long>(value)};
     SCONFIG_LIST list = {1, &config};
-    const long status = j2534->PassThruIoctl(chanID, SET_CONFIG, &list, NULL);
+    const long status = PassThruIoctl(chanID, SET_CONFIG, &list, NULL);
     return status == STATUS_NOERROR ? STATUS_SUCCESS : transport_failure(status, "SET_CONFIG");
 }
 
@@ -1127,7 +1132,7 @@ unsigned long SerialPortActionsDirect::read_vbatt()
     {
         if (!J2534_open_ok)
             return STATUS_ERROR;
-        if (!checkJ2534Status(j2534->PassThruIoctl(devID,READ_VBATT,NULL,&vBatt), "READ_VBATT"))
+        if (!checkJ2534Status(PassThruIoctl(devID,READ_VBATT,NULL,&vBatt), "READ_VBATT"))
         {
             return STATUS_ERROR;
         }
@@ -1180,7 +1185,9 @@ int SerialPortActionsDirect::init_j2534_connection()
     if (j2534->open_serial_port(serial_port) != serial_port)
         return fail();
 #endif
-    if (!j2534->init())
+    const bool libraryLoaded = j2534->init();
+    try { if(trace.enabled()) trace.record("dll_load",{{"loaded",libraryLoaded}}); } catch (...) {}
+    if (!libraryLoaded)
     {
         emit LOG_E("INIT: Can't load J2534 DLL.", true, true);
 #if defined Q_OS_WIN32
@@ -1188,7 +1195,7 @@ int SerialPortActionsDirect::init_j2534_connection()
 #endif
         return fail();
     }
-    if (!checkJ2534Status(j2534->PassThruOpen(NULL, &devID), "PassThruOpen"))
+    if (!checkJ2534Status(PassThruOpen(NULL, &devID), "PassThruOpen"))
         return fail();
     J2534_open_ok = true;
 
@@ -1198,7 +1205,7 @@ int SerialPortActionsDirect::init_j2534_connection()
     char strDllVersion[256] = {};
     char strFirmwareVersion[256] = {};
     char strSerial[256] = {};
-    const long versionStatus = j2534->PassThruReadVersion(strApiVersion, strDllVersion, strFirmwareVersion, devID);
+    const long versionStatus = PassThruReadVersion(strApiVersion, strDllVersion, strFirmwareVersion, devID);
     if (versionStatus == STATUS_NOERROR)
     {
         for (const char *value : {strApiVersion, strDllVersion, strFirmwareVersion})
@@ -1297,7 +1304,7 @@ int SerialPortActionsDirect::set_j2534_can()
     if (!J2534_open_ok)
         return STATUS_ERROR;
     // use ISO9141_NO_CHECKSUM to disable checksumming on both tx and rx messages
-    if (!checkJ2534Status(j2534->PassThruConnect(devID, protocol, flags, baudrate, &chanID), "PassThruConnect"))
+    if (!checkJ2534Status(PassThruConnect(devID, protocol, flags, baudrate, &chanID), "PassThruConnect"))
     {
         return STATUS_ERROR;
     }
@@ -1317,7 +1324,7 @@ int SerialPortActionsDirect::unset_j2534_can()
 {
     if (!J2534_connect_ok)
         return STATUS_ERROR;
-    if (!checkJ2534Status(j2534->PassThruDisconnect(chanID), "PassThruDisconnect"))
+    if (!checkJ2534Status(PassThruDisconnect(chanID), "PassThruDisconnect"))
     {
         return STATUS_ERROR;
     }
@@ -1342,7 +1349,7 @@ int SerialPortActionsDirect::set_j2534_can_timings()
     SCONFIG scp[] = {{LOOPBACK, 0}};
     scl.NumOfParams = ARRAYSIZE(scp);
     scl.ConfigPtr = scp;
-    if (!checkJ2534Status(j2534->PassThruIoctl(chanID,SET_CONFIG,&scl,NULL), "PassThruIoctl"))
+    if (!checkJ2534Status(PassThruIoctl(chanID,SET_CONFIG,&scl,NULL), "PassThruIoctl"))
     {
         return STATUS_ERROR;
     }
@@ -1361,7 +1368,7 @@ int SerialPortActionsDirect::set_j2534_can_filters()
     PASSTHRU_MSG msgMask, msgPattern, msgFlow;
     unsigned long msgId;
 
-    if (!checkJ2534Status(j2534->PassThruIoctl(chanID, CLEAR_MSG_FILTERS, NULL, NULL), "CLEAR_MSG_FILTERS"))
+    if (!checkJ2534Status(PassThruIoctl(chanID, CLEAR_MSG_FILTERS, NULL, NULL), "CLEAR_MSG_FILTERS"))
         return STATUS_ERROR;
 
     if (is_can_connection)
@@ -1383,7 +1390,7 @@ int SerialPortActionsDirect::set_j2534_can_filters()
         msgPattern.Data[2] = (can_destination_address >> 8) & 0xFF;
         msgPattern.Data[3] = (can_destination_address & 0xFF);
 
-        if (!checkJ2534Status(j2534->PassThruStartMsgFilter(chanID, PASS_FILTER, &msgMask, &msgPattern, NULL, &msgId), "PassThruStartMsgFilter"))
+        if (!checkJ2534Status(PassThruStartMsgFilter(chanID, PASS_FILTER, &msgMask, &msgPattern, NULL, &msgId), "PassThruStartMsgFilter"))
         {
             return STATUS_ERROR;
         }
@@ -1411,7 +1418,7 @@ int SerialPortActionsDirect::set_j2534_can_filters()
         msgFlow.Data[2] = (iso15765_source_address >> 8) & 0xFF;
         msgFlow.Data[3] = (iso15765_source_address & 0xFF);
 
-        if (!checkJ2534Status(j2534->PassThruStartMsgFilter(chanID, FLOW_CONTROL_FILTER, &msgMask, &msgPattern, &msgFlow, &msgId), "PassThruStartMsgFilter"))
+        if (!checkJ2534Status(PassThruStartMsgFilter(chanID, FLOW_CONTROL_FILTER, &msgMask, &msgPattern, &msgFlow, &msgId), "PassThruStartMsgFilter"))
         {
             return STATUS_ERROR;
         }
@@ -1465,7 +1472,7 @@ int SerialPortActionsDirect::set_j2534_iso9141()
     if (!J2534_open_ok)
         return STATUS_ERROR;
     // use ISO9141_NO_CHECKSUM to disable checksumming on both tx and rx messages
-    if (!checkJ2534Status(j2534->PassThruConnect(devID, protocol, flags, baudrate, &chanID), "PassThruConnect"))
+    if (!checkJ2534Status(PassThruConnect(devID, protocol, flags, baudrate, &chanID), "PassThruConnect"))
     {
         return STATUS_ERROR;
     }
@@ -1509,7 +1516,7 @@ int SerialPortActionsDirect::set_j2534_iso9141_timings()
             break;
         }
 
-        if (!checkJ2534Status(j2534->PassThruIoctl(chanID, SET_CONFIG, &scl, NULL), "PassThruIoctl"))
+        if (!checkJ2534Status(PassThruIoctl(chanID, SET_CONFIG, &scl, NULL), "PassThruIoctl"))
         {
             return STATUS_ERROR;
         }
@@ -1532,7 +1539,7 @@ int SerialPortActionsDirect::set_j2534_iso9141_timings()
             scp[4].Value = EVEN_PARITY;
         scp[5].Value = 25;
         scl.ConfigPtr = scp;
-        if (!checkJ2534Status(j2534->PassThruIoctl(chanID,SET_CONFIG,&scl,NULL), "PassThruIoctl"))
+        if (!checkJ2534Status(PassThruIoctl(chanID,SET_CONFIG,&scl,NULL), "PassThruIoctl"))
         {
             return STATUS_ERROR;
         }
@@ -1564,7 +1571,7 @@ int SerialPortActionsDirect::set_j2534_iso9141_filters()
     msgMask = msgPattern = txmsg;
     memset(msgMask.Data, 0, txmsg.DataSize); // mask the first 4 byte to 0
     memset(msgPattern.Data, 0, txmsg.DataSize);// match it with 0 (i.e. pass everything)
-    if (!checkJ2534Status(j2534->PassThruStartMsgFilter(chanID, PASS_FILTER, &msgMask, &msgPattern, NULL, &msgId), "PassThruStartMsgFilter"))
+    if (!checkJ2534Status(PassThruStartMsgFilter(chanID, PASS_FILTER, &msgMask, &msgPattern, NULL, &msgId), "PassThruStartMsgFilter"))
     {
         return STATUS_ERROR;
     }
@@ -1572,7 +1579,7 @@ int SerialPortActionsDirect::set_j2534_iso9141_filters()
     {
         //emit LOG_D("Set filters OK";
     }
-    //j2534->PassThruSetProgrammingVoltage(devID, J1962_PIN_9, 5000);
+    //PassThruSetProgrammingVoltage(devID, J1962_PIN_9, 5000);
 
     return STATUS_SUCCESS;
 }
@@ -1588,7 +1595,7 @@ bool SerialPortActionsDirect::checkJ2534Status(long status, const char *operatio
 void SerialPortActionsDirect::reportJ2534Error(long status, const char *operation)
 {
     char err[512] = {};
-    const long errorStatus = j2534->PassThruGetLastError(err);
+    const long errorStatus = PassThruGetLastError(err);
     err[sizeof(err) - 1] = '\0';
     emit LOG_E(QString("J2534 %1 failed (status 0x%2): %3")
                .arg(operation ? operation : "operation")
@@ -1740,3 +1747,5 @@ CommunicationResult SerialPortActionsDirect::read_j2534_checked(uint16_t timeout
     const QByteArray bytes = read_serial_data(timeout);
     return communication_result(bytes, false);
 }
+
+#include "j2534_trace_calls.inc"

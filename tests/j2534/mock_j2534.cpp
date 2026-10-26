@@ -35,6 +35,7 @@ long J2534::PassThruIoctl(unsigned long id, unsigned long op, const void*, void*
     return result ? result : mockIoctl(id, op, out);
 }
 long J2534::PassThruStartMsgFilter(unsigned long id, unsigned long, const PASSTHRU_MSG*, const PASSTHRU_MSG*, const PASSTHRU_MSG*, unsigned long *filter) { *filter = 9; return call("filter", id); }
+long J2534::PassThruStopMsgFilter(unsigned long id, unsigned long) { return call("stopFilter", id); }
 long J2534::PassThruReadVersion(char *api, char *dll, char *fw, unsigned long id) {
     long result = call("version", id);
     if (result) return result;

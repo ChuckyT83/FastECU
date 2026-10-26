@@ -22,6 +22,9 @@ int main(int argc, char *argv[])
                                 "Enable console debug output");
     cmdParser.addOption(cmdDebug);
 
+    QCommandLineOption cmdTrace("j2534-trace", "Write optional J2534 JSONL trace to a NEW file (may contain sensitive ECU data)", "file");
+    cmdParser.addOption(cmdTrace);
+
     //Locate debug option before QCommandLineParser to open console properly
     for (int i = 1; i < argc; i++)
     {
@@ -53,12 +56,19 @@ int main(int argc, char *argv[])
     do
     {
         QApplication a(argc, argv);
+        a.setApplicationVersion(FileActions::ConfigValuesStructure().software_version);
 
         //Parser works only after QApplication initialization
         cmdParser.process(a);
 
         QString addr = cmdParser.value(cmdHost);
         QString password = cmdParser.value(cmdPassword);
+
+        if (cmdParser.isSet(cmdTrace)) {
+            if (cmdParser.value(cmdTrace).isEmpty()) { qCritical("--j2534-trace requires a new output filename"); return 2; }
+            qWarning("J2534 trace enabled: may contain sensitive ECU/calibration data; review before sharing. Known ISO15765 security/VIN data is omitted.");
+            a.setProperty("j2534TracePath", cmdParser.value(cmdTrace));
+        }
 
         MainWindow w(addr, password, nullptr);
 

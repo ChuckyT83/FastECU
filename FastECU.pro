@@ -143,6 +143,9 @@ SOURCES += \
     verticallabel.cpp
 
 HEADERS += \
+    serial_port/j2534_trace.h \
+    serial_port/j2534_trace_calls.inc \
+    serial_port/j2534_trace_message.h \
     modules/ecu/subaru_sh7058_kernel_layout.h \
     calibration_maps.h \
     calibration_treewidget.h \

@@ -11,10 +11,10 @@ $logs = Join-Path $build 'logs'
 New-Item -ItemType Directory -Force $logs | Out-Null
 
 function Invoke-Logged {
-    param([string]$Name, [string]$File, [string[]]$Arguments)
+    param([string]$Name, [string]$File, [string[]]$Arguments, [int]$ExpectedExitCode = 0)
     & $File @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $logs "$Name.log")
     $code = $LASTEXITCODE
-    if ($code -ne 0) {
+    if ($code -ne $ExpectedExitCode) {
         # Compiler/test output contains no credentials. Keep the diagnostic tail
         # in a public annotation as well as the downloadable artifact.
         $content = Get-Content (Join-Path $logs "$Name.log")
@@ -86,6 +86,38 @@ try {
         Invoke-Logged -Name 'build-kernel-offline' -File 'nmake.exe' -Arguments @('/NOLOGO')
         Invoke-Logged -Name 'kernel-offline-tests' -File (Join-Path $kernelBuild 'subaru-kernel-offline.exe') -Arguments @('-o', "$(Join-Path $logs 'kernel-offline-results.txt'),txt", '-o', "$(Join-Path $logs 'kernel-offline-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $diagnosticsBuild = Join-Path $build 'diagnostics'
+    New-Item -ItemType Directory -Force $diagnosticsBuild | Out-Null
+    Copy-Item (Join-Path $build 'mock-j2534.dll') $diagnosticsBuild -Force
+    Copy-Item (Join-Path $build 'incomplete-j2534.dll') $diagnosticsBuild -Force
+    Push-Location $diagnosticsBuild
+    try {
+        Invoke-Logged -Name 'qmake-diagnostics' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/j2534/diagnostics.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-diagnostics' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'diagnostics-tests' -File (Join-Path $diagnosticsBuild 'j2534-diagnostics-tests.exe') -Arguments @('-o', "$(Join-Path $logs 'diagnostics-results.txt'),txt", '-o', "$(Join-Path $logs 'diagnostics-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
+    $utilityBuild = Join-Path $build 'diagnostic-tool'
+    New-Item -ItemType Directory -Force $utilityBuild | Out-Null
+    Push-Location $utilityBuild
+    try {
+        Invoke-Logged -Name 'qmake-diagnostic-tool' -File 'qmake.exe' -Arguments @((Join-Path $source 'tools/j2534_diagnostics/diagnostics.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-diagnostic-tool' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        # Expected refusal is a successful safety assertion, never a device probe.
+        Invoke-Logged -Name 'identification-blocked' -File (Join-Path $utilityBuild 'fastecu-j2534-diagnostics.exe') -Arguments @('--identification-plan') -ExpectedExitCode 2
+        $package = Join-Path $build 'diagnostic-tool-package'
+        New-Item -ItemType Directory -Force $package | Out-Null
+        Copy-Item (Join-Path $utilityBuild 'fastecu-j2534-diagnostics.exe') $package -Force
+        Invoke-Logged -Name 'package-diagnostic-tool' -File 'windeployqt.exe' -Arguments @('--no-translations', '--no-compiler-runtime', (Join-Path $package 'fastecu-j2534-diagnostics.exe'))
+        Invoke-Logged -Name 'packaged-identification-blocked' -File (Join-Path $package 'fastecu-j2534-diagnostics.exe') -Arguments @('--identification-plan') -ExpectedExitCode 2
+        # Passive HKLM/view enumeration is safe on a host with no J2534 adapter.
+        $discovery = & (Join-Path $package 'fastecu-j2534-diagnostics.exe') 2>&1 | Tee-Object -FilePath (Join-Path $logs 'driver-discovery.json')
+        $discoveryCode = $LASTEXITCODE
+        if ($discoveryCode -notin @(0, 1)) { throw "Discovery failed unexpectedly ($discoveryCode)" }
+        $discoveryReport = ($discovery -join "`n") | ConvertFrom-Json
+        if ($discoveryReport.validation_level -ne 'discovery_only' -or $discoveryReport.device_opened -or $discoveryReport.ecu_communication) { throw 'Discovery exceeded passive capability' }
+        if ($discoveryReport.registry_errors.Count -ne 0) { throw 'Native registry enumeration reported errors' }
+        if (($discoveryCode -eq 1) -ne ($discoveryReport.compatible_04_04_count -eq 0)) { throw 'Discovery exit/result mismatch' }
+    } finally { Pop-Location }
     $evidence = @(
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
@@ -94,6 +126,7 @@ try {
         ('Subaru production safety and offline upload candidate: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
         ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
         ('Synthetic kernel model: ' + ((Get-Content (Join-Path $logs 'kernel-offline-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Driver diagnostics: ' + ((Get-Content (Join-Path $logs 'diagnostics-results.txt') | Select-String 'Totals:') -join ' '))
         ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)
     ) -join '; '

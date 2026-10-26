@@ -15,3 +15,5 @@ win32 {
     SOURCES += ../j2534/mock_j2534.cpp
     HEADERS += ../../serial_port/J2534_linux.h
 }
+
+HEADERS += ../../serial_port/j2534_trace.h ../../serial_port/j2534_trace_message.h ../../serial_port/j2534_trace_calls.inc

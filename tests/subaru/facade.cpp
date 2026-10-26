@@ -4,6 +4,15 @@
 class SubaruFacadeTest : public QObject {
     Q_OBJECT
 private slots:
+    void sensitivePreview_data(){QTest::addColumn<QByteArray>("service");for(const char *s:{"27","67","0902","4902"})QTest::newRow(s)<<QByteArray::fromHex(s);}
+    void sensitivePreview() {
+        QFETCH(QByteArray,service);SerialPortActions facade;facade.set_is_iso15765_connection(true);
+        QSignalSpy logs(&facade,&SerialPortActions::LOG_D);
+        const auto bytes=QByteArray::fromHex("000007e0")+service+QByteArray("SECRET");
+        const auto original=bytes;facade.write_checked(bytes);QCOMPARE(bytes,original);
+        QVERIFY(!logs.isEmpty());const auto text=logs.first().first().toString();
+        QVERIFY(text.contains("redacted"));QVERIFY(!text.contains("SECRET"));QVERIFY(!text.contains("53 45 43"));
+    }
     void localUnsupported() {
         SerialPortActions facade;
         QVERIFY(facade.isDirectConnection());

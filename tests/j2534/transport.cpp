@@ -1,5 +1,6 @@
 #include <QtTest>
 #include <QLibrary>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <QFileInfo>
 #include <memory>
@@ -258,6 +259,76 @@ private slots:
         QCOMPARE(port->clear_tx_buffer(),STATUS_ERROR);
         QCOMPARE(port->write_j2534_data(message),STATUS_ERROR);
         QCOMPARE(value(4),1UL); QCOMPARE(value(0),0UL);
+    }
+    void traceCompletePayload_data() {QTest::addColumn<int>("size");for(int size:{24,128,4128})QTest::newRow(qPrintable(QString::number(size)))<<size;}
+    void traceCompletePayload() {
+        QFETCH(int,size);QTemporaryDir directory;const auto path=directory.filePath("trace.jsonl");
+        QVERIFY(port->enable_j2534_trace(path));
+        QByteArray bytes(size,'K');bytes.replace(0,5,QByteArray::fromHex("000007e0b6"));
+        QCOMPARE(port->write_j2534_data(bytes),STATUS_SUCCESS);
+        rx(0,1,size,0,0);const auto incoming=port->read_j2534_data(321);QCOMPARE(incoming.size(),size);
+        port->close_j2534_serial_port();port->finish_j2534_trace();QVERIFY(!port->j2534_trace_failed());
+        QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));int writes=0,reads=0,disconnects=0;quint64 sequence=0;
+        while(!file.atEnd()) {
+            const auto event=QJsonDocument::fromJson(file.readLine()).object();const auto op=event["operation"].toString();
+            if(event.contains("sequence")){const auto current=event["sequence"].toString().toULongLong();QVERIFY(current>sequence);sequence=current;QVERIFY(!event["timestamp_utc"].toString().isEmpty());}
+            if(op=="PassThruWriteMsgs"||op=="PassThruReadMsgs") {
+                QCOMPARE(event["length"].toInt(),size);QCOMPARE(event["returned_count"].toInt(),1);QCOMPARE(event["status"].toInt(),0);
+                QVERIFY(event.contains("elapsed_us"));QVERIFY(event["elapsed_us"].toDouble()>=0);
+                const bool sending=op=="PassThruWriteMsgs";
+                // The old receive fixture returns ProtocolID=0. Preserve that
+                // observation rather than substituting the configured protocol.
+                QCOMPARE(event["protocol_id"].toInt(),sending?int(ISO15765):0);
+                QCOMPARE(event["configured_protocol"].toInt(),int(ISO15765));QVERIFY(!event["redacted"].toBool());
+                QCOMPARE(event["direction"].toString(),sending?QString("tx"):QString("rx"));
+                QCOMPARE(QByteArray::fromHex(event["data_hex"].toString().toLatin1()),sending?bytes:incoming);
+                if(sending){++writes;QCOMPARE(event["timeout_ms"].toInt(),100);}
+                else{++reads;QVERIFY(event["timeout_ms"].toInt()<=321);}
+            }
+            if(op=="PassThruDisconnect")++disconnects;
+        }
+        QCOMPARE(writes,1);QCOMPARE(reads,1);QCOMPARE(disconnects,1);QCOMPARE(value(0),1UL);QCOMPARE(value(1),1UL);
+    }
+    void traceFailureDoesNotChangeTransport_data(){QTest::addColumn<bool>("existing");QTest::newRow("missing-parent")<<false;QTest::newRow("no-overwrite")<<true;}
+    void traceFailureDoesNotChangeTransport() {
+        QFETCH(bool,existing);QTemporaryDir directory;QString path=directory.filePath(existing?"existing.jsonl":"missing/log.jsonl");
+        if(existing){QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));file.write("preserve");}
+        port->enable_j2534_trace(path);
+        QCOMPARE(port->write_j2534_data(message),STATUS_SUCCESS);QCOMPARE(value(0),1UL);QCOMPARE(value(1),0UL);
+        port->finish_j2534_trace();QVERIFY(port->j2534_trace_failed());
+        if(existing){QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));QCOMPARE(file.readAll(),QByteArray("preserve"));}
+    }
+    void traceStatus_data() {
+        QTest::addColumn<QString>("scenario");for(const char *s:{"disabled","driver-error","timeout","oversized-driver-response","config"})QTest::newRow(s)<<QString(s);
+    }
+    void traceStatus() {
+        QFETCH(QString,scenario);QTemporaryDir directory;const auto path=directory.filePath("status.jsonl");
+        if(scenario!="disabled")QVERIFY(port->enable_j2534_trace(path));
+        if(scenario=="driver-error"){tx(ERR_FAILED,0);QCOMPARE(port->write_j2534_data(message),STATUS_ERROR);}
+        else if(scenario=="timeout"){rx(ERR_TIMEOUT,0,0,0,0);QVERIFY(port->read_j2534_data(77).isEmpty());}
+        else if(scenario=="oversized-driver-response"){rx(0,1,4129,0,0);QVERIFY(port->read_j2534_data(77).isEmpty());}
+        else if(scenario=="config"){QCOMPARE(port->set_j2534_can_timings(),STATUS_SUCCESS);QCOMPARE(port->set_j2534_can_filters(),STATUS_SUCCESS);}
+        else QCOMPARE(port->write_j2534_data(message),STATUS_SUCCESS);
+        port->finish_j2534_trace();
+        if(scenario=="disabled"){QVERIFY(!QFileInfo::exists(path));return;}
+        QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));bool found=false,filter=false;
+        while(!file.atEnd()) {
+            const auto e=QJsonDocument::fromJson(file.readLine()).object();const auto op=e["operation"].toString();
+            if(scenario=="driver-error"&&op=="PassThruWriteMsgs"){QCOMPARE(e["status"].toInt(),int(ERR_FAILED));found=true;}
+            if(scenario=="timeout"&&op=="PassThruReadMsgs"){QCOMPARE(e["status"].toInt(),int(ERR_TIMEOUT));QCOMPARE(e["returned_count"].toInt(),0);QVERIFY(e["outcome"].toString().contains("timeout"));found=true;}
+            if(scenario=="oversized-driver-response"&&op=="PassThruReadMsgs"){QCOMPARE(e["length"].toInt(),4129);QVERIFY(e.contains("capture_error"));QVERIFY(!e.contains("data_hex"));found=true;}
+            if(scenario=="config"&&op=="PassThruIoctl"&&e.contains("config")){QVERIFY(!e["config"].toArray().isEmpty());found=true;}
+            if(op=="PassThruStartMsgFilter"){QVERIFY(e.contains("mask"));QVERIFY(e.contains("pattern"));QVERIFY(e.contains("flow_control"));filter=true;}
+        }
+        QVERIFY(found);if(scenario=="config")QVERIFY(filter);
+    }
+    void traceSensitivePayloads_data(){QTest::addColumn<QByteArray>("service");for(const auto &s:{"27","67","0902","4902"})QTest::newRow(s)<<QByteArray::fromHex(s);}
+    void traceSensitivePayloads() {
+        QFETCH(QByteArray,service);QTemporaryDir directory;const auto path=directory.filePath("private.jsonl");QVERIFY(port->enable_j2534_trace(path));
+        const auto bytes=QByteArray::fromHex("000007e0")+service+QByteArray("PRIVATE-SECRET");QCOMPARE(port->write_j2534_data(bytes),STATUS_SUCCESS);
+        port->finish_j2534_trace();QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));const auto all=file.readAll();QVERIFY(!all.contains("PRIVATE-SECRET"));QVERIFY(!all.contains(QByteArray("PRIVATE-SECRET").toHex()));
+        bool found=false;for(const auto &line:all.split('\n')){const auto e=QJsonDocument::fromJson(line).object();if(e["operation"]=="PassThruWriteMsgs"){found=true;QVERIFY(e["redacted"].toBool());QCOMPARE(e["length"].toInt(),bytes.size());QVERIFY(!e.contains("data_hex"));}}
+        QVERIFY(found);
     }
     void fiveBaudBounds() {
 #ifdef Q_OS_WIN

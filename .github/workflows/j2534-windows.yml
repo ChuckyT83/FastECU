@@ -20,6 +20,11 @@ on:
       - 'serial_port/serial_port_actions_direct.*'
       - 'serial_port/serial_port_actions.*'
       - 'serial_port/communication_result.h'
+      - 'serial_port/j2534_*.h'
+      - 'serial_port/j2534_*.inc'
+      - 'tools/j2534_diagnostics/**'
+      - 'main.cpp'
+      - 'FastECU.pro'
   workflow_dispatch:
 
 permissions:
@@ -75,6 +80,7 @@ jobs:
           name: j2534-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build-j2534/logs/
+            build-j2534/diagnostic-tool-package/
             aqtinstall.log
           if-no-files-found: warn
           retention-days: 14

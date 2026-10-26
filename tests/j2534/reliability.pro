@@ -4,3 +4,5 @@ CONFIG -= app_bundle
 TARGET = j2534-reliability
 SOURCES += reliability.cpp mock_j2534.cpp ../../serial_port/serial_port_actions_direct.cpp
 HEADERS += ../../serial_port/serial_port_actions_direct.h ../../serial_port/J2534_linux.h mock_j2534.h
+
+HEADERS += ../../serial_port/j2534_trace.h ../../serial_port/j2534_trace_message.h ../../serial_port/j2534_trace_calls.inc

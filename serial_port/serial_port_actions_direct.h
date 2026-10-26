@@ -2,6 +2,7 @@
 #define SERIAL_PORT_ACTIONS_DIRECT_H
 
 #include "communication_result.h"
+#include "j2534_trace.h"
 #include <QCoreApplication>
 #include <QByteArray>
 #include <QComboBox>
@@ -154,12 +155,17 @@ public:
 
     CommunicationResult write_j2534_checked(QByteArray output);
     CommunicationResult read_j2534_checked(uint16_t timeout);
+    bool enable_j2534_trace(const QString &path) { return trace.start(path); }
+    void finish_j2534_trace() { trace.finish(); }
+    bool j2534_trace_failed() const { return trace.failed(); }
 
     enum class TransportState { Idle, Success, NoMessage, Partial, Error };
     TransportState transport_state() const { return transportState; }
     long transport_status() const { return transportStatus; }
 
 private:
+    J2534Trace trace;
+    void trace_api(const char *operation, long status, QJsonObject fields = {});
     long communicationDriverStatus = 0;
     bool communicationHasDriverStatus = false;
     CommunicationResult communication_result(const QByteArray &bytes, bool write);

@@ -1,4 +1,5 @@
 #include "serial_port_actions.h"
+#include "j2534_trace_message.h"
 #include "qdialog.h"
 #include "qtrohelper.hpp"
 #include "rep_serial_port_actions_replica.h"
@@ -1185,7 +1186,7 @@ CommunicationResult SerialPortActions::write_checked(QByteArray output)
         return CommunicationResult::failure(CommunicationResult::State::Unsupported,
             "Remote SH7058 communication has no explicit result contract");
     set_comm_busy(true);
-    emit LOG_D("Sent: " + parse_message_to_hex(output.mid(0,20)), true, true);
+    emit LOG_D("Sent: " + ((serial_direct->is_iso15765_connection && j2534SensitiveIso15765(output)) ? QString("[redacted security/VIN payload]") : parse_message_to_hex(output.mid(0,20))), true, true);
     const auto result = serial_direct->write_j2534_checked(output);
     if (!result.ok()) set_comm_busy(false);
     return result;
@@ -1198,7 +1199,7 @@ CommunicationResult SerialPortActions::read_checked(uint16_t timeout)
             "Remote SH7058 communication has no explicit result contract");
     // Capture the outcome before optional adapter metadata polling changes it.
     const auto result = serial_direct->read_j2534_checked(timeout);
-    emit LOG_D("Response: " + parse_message_to_hex(result.bytes.mid(0,20)), true, true);
+    emit LOG_D("Response: " + ((serial_direct->is_iso15765_connection && j2534SensitiveIso15765(result.bytes)) ? QString("[redacted security/VIN payload]") : parse_message_to_hex(result.bytes.mid(0,20))), true, true);
     if ((result.ok() || result.state == CommunicationResult::State::Timeout) && get_read_vbatt()) {
         vBatt = serial_direct->read_vbatt();
         set_read_vbatt(false);
