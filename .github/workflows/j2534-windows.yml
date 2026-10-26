@@ -55,7 +55,7 @@ jobs:
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false
-      - name: Build and run native offline tests
+      - name: Build and run J2534, Subaru safety, and offline candidate tests
         shell: pwsh
         run: ./tests/j2534/run-windows.ps1
       - name: Report installer failures

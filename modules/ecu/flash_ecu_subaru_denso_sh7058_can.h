@@ -51,6 +51,7 @@ private:
     friend class SubaruSafetyTest;
     enum { STATUS_VERIFY_ERROR = 2, STATUS_CANCELLED = 3 };
     bool valid_image() const;
+    void report_operation(int status);
     CommunicationResult communication;
     QByteArray outstandingRequest;
     bool submit(const QByteArray &request);

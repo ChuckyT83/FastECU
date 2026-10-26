@@ -6,6 +6,7 @@
 #include "serial_port_actions.h"
 #include "flash_ecu_subaru_denso_sh7058_can.h"
 #include "subaru_sh7058_safety.h"
+#include "candidate_uploader.h"
 
 // Diagnostic formatting is the only FileActions symbol needed by the module.
 // Its text is irrelevant to state/command assertions; the application links the
@@ -121,7 +122,7 @@ private slots:
                 b->button(QMessageBox::Ok)->click();
             }
         }); timer.start(1);
-        module->run();
+        module->report_operation(module->write_mem(false));
         QVERIFY(!outcome.isEmpty());
         QCOMPARE(module->operation_result(),failure ? 1 : mismatches ? 2 : 0);
         QCOMPARE(outcome.contains("was succesful"),mismatches==0 && !failure);
@@ -205,6 +206,30 @@ private slots:
                 "sub_ecu_denso_sh7058_can_cobb"}) QVERIFY(SubaruSH7058Safety::usesModule(name));
         QVERIFY(!SubaruSH7058Safety::usesModule("sub_ecu_denso_sh7058_can_diesel"));
         QVERIFY(!SubaruSH7058Safety::usesModule("sub_ecu_denso_sh7058"));
+    }
+    void sectorBounds_data() {
+        QTest::addColumn<uint>("start"); QTest::addColumn<uint>("length"); QTest::addColumn<bool>("valid");
+        const auto *map=SubaruSH7058Safety::memoryMap("SH7058");
+        for(unsigned i=0;i<map->numblocks;++i)
+            QTest::newRow(qPrintable(QString("mapped-%1").arg(i)))<<map->fblocks[i].start<<map->fblocks[i].len<<true;
+        QTest::newRow("inside-large-sector")<<0x9000u<<0x1000u<<false;
+        QTest::newRow("partial-large-sector")<<0x8000u<<0x1000u<<false;
+        QTest::newRow("two-sectors")<<0u<<0x2000u<<false;
+        QTest::newRow("past-image")<<0xe0000u<<0x21000u<<false;
+        QTest::newRow("wrap")<<0xfffff000u<<0x2000u<<false;
+        QTest::newRow("empty")<<0u<<0u<<false;
+    }
+    void sectorBounds() {
+        QFETCH(uint,start); QFETCH(uint,length); QFETCH(bool,valid);
+        const auto *map=SubaruSH7058Safety::memoryMap("SH7058");
+        QCOMPARE(SubaruSH7058Safety::validSector(map,start,length),valid);
+        QVERIFY(!SubaruSH7058Safety::validSector(nullptr,start,length));
+        port.failWrite=[](const QByteArray &){return true;};
+        QCOMPARE(module->flash_block(reinterpret_cast<const uint8_t*>(cal.FullRomData.constData()),start,length),1);
+        QCOMPARE(port.writes.size(),valid ? 1 : 0);
+        if(valid) { QCOMPARE(commands().first(),int(SUB_KERNEL_BLANK_PAGE)); QCOMPARE(get32(port.writes.first(),9),start); }
+        QVERIFY(!commands().contains(SUB_KERNEL_WRITE_FLASH_BUFFER));
+        QVERIFY(!commands().contains(SUB_KERNEL_COMMIT_FLASH_BUFFER));
     }
     void sourceBounds() {
         const auto *src=reinterpret_cast<const uint8_t*>(cal.FullRomData.constData()); int modified=0;
@@ -550,7 +575,7 @@ private slots:
             if(b->windowTitle()=="ECU Operation") outcome=b->text();
             b->button(QMessageBox::Ok)->click();
         }}); timer.start(1);
-        module->run(); QCOMPARE(module->operation_result(),1); QVERIFY(outcome.contains("operation failed")); QVERIFY(!outcome.contains("was succesful"));
+        module->report_operation(module->write_mem(false)); QCOMPARE(module->operation_result(),1); QVERIFY(outcome.contains("operation failed")); QVERIFY(!outcome.contains("was succesful"));
         QCOMPARE(commands().count(SUB_KERNEL_WRITE_FLASH_BUFFER),0);
     }
     void malformedDiagnosticStops_data() { QTest::addColumn<int>("stage"); for(int i=1;i<10;++i) QTest::newRow(qPrintable(QString::number(i)))<<i; }
@@ -612,6 +637,191 @@ private slots:
         QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
         QVERIFY(port.writes.isEmpty());
         cancel(); QCOMPARE(module->upload_kernel(file.fileName(),0xFFFF3000),3); QVERIFY(port.writes.isEmpty());
+    }
+    void programmingEntryGated_data() {
+        QTest::addColumn<QString>("mode"); QTest::addColumn<bool>("runningKernel");
+        for(const char *mode:{"write","test_write"}) for(bool running:{false,true})
+            QTest::newRow(qPrintable(QString(mode)+(running?"/running-kernel":"/no-kernel")))<<QString(mode)<<running;
+    }
+    void outcomeReasonPriority_data() {
+        QTest::addColumn<int>("status"); QTest::addColumn<QString>("expected");
+        QTest::newRow("verification")<<2<<QString("Verification failed");
+        QTest::newRow("cancelled")<<3<<QString("Operation cancelled");
+        QTest::newRow("unsupported")<<1<<QString("Explicit unsupported reason");
+    }
+    void outcomeReasonPriority() {
+        QFETCH(int,status); QFETCH(QString,expected); QString message;
+        module->communication=CommunicationResult::failure(CommunicationResult::State::Unsupported,"Explicit unsupported reason");
+        QTimer timer; connect(&timer,&QTimer::timeout,[&]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) {
+            message=b->text();b->accept();
+        }});timer.start(1);
+        module->report_operation(status);QCOMPARE(module->operation_result(),status);QVERIFY(message.contains(expected));
+        QVERIFY(!message.contains("was succesful"));QVERIFY(port.writes.isEmpty());
+    }
+    void programmingEntryGated() {
+        QFETCH(QString,mode); QFETCH(bool,runningKernel); module->cmd_type=mode; module->kernel_alive=runningKernel;
+        QString message;
+        QTimer timer; connect(&timer,&QTimer::timeout,[&]{for(auto *w:QApplication::topLevelWidgets()) if(auto *b=qobject_cast<QMessageBox*>(w)) {
+            message=b->text(); b->accept();
+        }}); timer.start(1);
+        module->run();
+        QCOMPARE(module->operation_result(),1); QVERIFY(!module->operation_succeeded(module->operation_result()));
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported));
+        QVERIFY(message.contains("programming remains disabled"));
+        QCOMPARE(port.setupCalls,0); QCOMPARE(port.checkedReads,0); QVERIFY(port.writes.isEmpty());
+    }
+
+private:
+    using CandidateExchange = OfflineUploadCandidate::Exchange;
+    static OfflineUploadCandidate::IdentityReview candidateIds() {
+        return {"A62A907107","A62A907107","ZE5T201V_DM24000","ZE5T201V_DM24000"};
+    }
+    static CommunicationResult candidateResult(const QByteArray &bytes = {}) {
+        CommunicationResult r; r.state=CommunicationResult::State::Success;
+        r.bytes=bytes; r.hasStatus=true; r.status=0; return r;
+    }
+    static QVector<CandidateExchange> candidateScript(const QByteArray &prepared, quint64 attempt=6007) {
+        QVector<CandidateExchange> script;
+        const auto add=[&](const QByteArray &request, OfflineKernelModel::Phase phase) {
+            CandidateExchange e; e.request=request; e.submission=candidateResult();
+            e.response=candidateResult(OfflineKernelModel::SyntheticProfile::reply(phase));
+            e.replyAttempt=attempt; e.replyToken=quint64(script.size()+1); script.append(e);
+        };
+        QByteArray request=QByteArray::fromHex("000007e0340433ff3000");
+        for(int shift=16;shift>=0;shift-=8) request+=char(prepared.size()>>shift);
+        add(request,OfflineKernelModel::Phase::Download);
+        for(int offset=0;offset<prepared.size();offset+=128) {
+            request=QByteArray::fromHex("000007e0b6");
+            const uint32_t address=0xffff3000u+uint32_t(offset);
+            for(int shift=16;shift>=0;shift-=8) request+=char(address>>shift);
+            request+=prepared.mid(offset,128); add(request,OfflineKernelModel::Phase::Block);
+        }
+        add(QByteArray::fromHex("000007e037"),OfflineKernelModel::Phase::Exit);
+        add(QByteArray::fromHex("000007e03101020202"),OfflineKernelModel::Phase::Start);
+        add(QByteArray::fromHex("000007e0beef000101000000"),OfflineKernelModel::Phase::Readiness);
+        return script;
+    }
+    void candidateHasNoDestructiveCommands(const OfflineUploadCandidate::Attempt &report) {
+        QVERIFY(!report.programmingAllowed()); QVERIFY(port.writes.isEmpty());
+        for(const auto &request:report.submittedRequests) {
+            if(request.mid(4,2)==QByteArray::fromHex("beef")) {
+                QCOMPARE(request.size(),12); QCOMPARE(uint8_t(request.at(8)),uint8_t(SUB_KERNEL_ID));
+            } else QVERIFY(request.size()>=5 && (uint8_t(request.at(4))==0x34 ||
+                uint8_t(request.at(4))==0xb6 || uint8_t(request.at(4))==0x37 || uint8_t(request.at(4))==0x31));
+        }
+    }
+private slots:
+    void candidateNormal_data() {
+        QTest::addColumn<int>("length"); for(int n:{4,128,129,6428,0x9000}) QTest::newRow(qPrintable(QString::number(n)))<<n;
+    }
+    void candidateNormal() {
+        QFETCH(int,length); QByteArray prepared;
+        QVERIFY(module->prepare_kernel(QByteArray(length,'K'),0xffff3000,prepared));
+        const auto layout=SubaruSH7058::KernelLayout::create(length,0xffff3000,0xffff3000,0x9000);
+        const auto review=OfflineUploadCandidate::reviewImage(cal.FullRomData,"SH7058",true,true,candidateIds());
+        OfflineKernelModel::SyntheticProfile synthetic; OfflineUploadCandidate::Uploader candidate(6007);
+        const auto script=candidateScript(prepared);
+        const auto report=candidate.run(review,prepared,layout,script,&synthetic);
+        QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::ReadyForOfflineReview));
+        QCOMPARE(int(report.upload),int(OfflineKernelModel::Outcome::SimulatedReady));
+        QCOMPARE(report.acknowledgedBlocks,layout.blockCount()); QCOMPARE(report.reads,script.size());
+        QCOMPARE(report.submittedRequests.size(),int(layout.blockCount())+4);
+        for(int i=0;i<script.size();++i) QCOMPARE(report.submittedRequests.at(i),script.at(i).request);
+        candidateHasNoDestructiveCommands(report);
+        // Even after the candidate's synthetic success, the real entry remains gated.
+        QTemporaryFile kernel; QVERIFY(kernel.open()); kernel.write(QByteArray(length,'K')); kernel.flush(); kernel.close();
+        QCOMPARE(module->upload_kernel(kernel.fileName(),0xffff3000),1);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Unsupported)); QVERIFY(port.writes.isEmpty());
+        const auto reused=candidate.run(review,prepared,layout,script,&synthetic);
+        QCOMPARE(int(reused.upload),int(OfflineKernelModel::Outcome::OutOfOrder)); QVERIFY(reused.submittedRequests.isEmpty());
+    }
+    void candidateFailure_data() {
+        QTest::addColumn<int>("index"); QTest::addColumn<QString>("fault");
+        // Download, first/intermediate/final block, exit, start and readiness.
+        for(int i:{0,1,25,51,52,53,54})
+            for(const char *fault:{"failed-write","zero","excess","timeout","negative","pending","truncated","oversized",
+                "unexpected","missing-provenance","old-attempt","stale-token","driver-with-ack","cancel-before","cancel-submitted","cancel-response"})
+                QTest::newRow(qPrintable(QString::number(i)+"/"+fault))<<i<<QString(fault);
+    }
+    void candidateFailure() {
+        using namespace OfflineKernelModel;
+        QFETCH(int,index); QFETCH(QString,fault); QByteArray prepared;
+        QVERIFY(module->prepare_kernel(QByteArray(6428,'K'),0xffff3000,prepared));
+        auto script=candidateScript(prepared); auto &e=script[index]; Outcome expected=Outcome::Malformed;
+        if(fault=="failed-write") { e.submission.state=CommunicationResult::State::TransportError; e.submission.status=7; expected=Outcome::TransportError; }
+        else if(fault=="zero") {e.submittedCount=0;expected=Outcome::PartialSubmission;}
+        else if(fault=="excess") e.submittedCount=2;
+        else if(fault=="timeout") {e.response.state=CommunicationResult::State::Timeout;e.response.status=9;expected=Outcome::Timeout;}
+        else if(fault=="negative"||fault=="pending") {e.response.bytes=QByteArray::fromHex("000007e87f")+e.request.mid(4,1)+char(fault=="pending"?0x78:0x13);expected=fault=="pending"?Outcome::Unsupported:Outcome::Rejected;}
+        else if(fault=="truncated") e.response.bytes.chop(1);
+        else if(fault=="oversized") e.response.bytes+=char(0);
+        else if(fault=="unexpected") {e.response.bytes[4]=char(uint8_t(e.response.bytes.at(4))^1);expected=Outcome::Unrelated;}
+        else if(fault=="missing-provenance") {e.replyAttempt=0;expected=Outcome::Uncorrelated;}
+        else if(fault=="old-attempt") {--e.replyAttempt;expected=Outcome::Uncorrelated;}
+        else if(fault=="stale-token") {e.replyToken=e.replyToken==1?2:e.replyToken-1;expected=Outcome::OutOfOrder;}
+        else if(fault=="driver-with-ack") {e.response.state=CommunicationResult::State::TransportError;e.response.status=7;expected=Outcome::TransportError;}
+        else if(fault=="cancel-before") {e.cancellation=CandidateExchange::CancelAt::BeforeSubmission;expected=Outcome::Cancelled;}
+        else if(fault=="cancel-submitted") {e.cancellation=CandidateExchange::CancelAt::AfterSubmission;expected=Outcome::Cancelled;}
+        else if(fault=="cancel-response") {e.cancellation=CandidateExchange::CancelAt::AfterResponse;expected=Outcome::Cancelled;}
+        const auto layout=SubaruSH7058::KernelLayout::create(6428,0xffff3000,0xffff3000,0x9000);
+        SyntheticProfile synthetic; OfflineUploadCandidate::Uploader candidate(6007);
+        const auto report=candidate.run(OfflineUploadCandidate::Preflight::Accepted,prepared,layout,script,&synthetic);
+        QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::UploadFailed)); QCOMPARE(int(report.upload),int(expected));
+        QCOMPARE(report.submittedRequests.size(),index+(fault=="cancel-before"?0:1));
+        const bool noRead=fault=="failed-write"||fault=="zero"||fault=="excess"||fault=="cancel-before"||fault=="cancel-submitted";
+        QCOMPARE(report.reads,index+(noRead?0:1));
+        if(fault=="failed-write"||fault=="driver-with-ack") { QVERIFY(report.transport.hasStatus);QCOMPARE(report.transport.status,7L); }
+        candidateHasNoDestructiveCommands(report);
+    }
+    void candidateImageReview_data() {
+        QTest::addColumn<QString>("problem"); QTest::addColumn<int>("expected");
+        using P=OfflineUploadCandidate::Preflight;
+        const QVector<QPair<QString,P>> rows={{"exact",P::Accepted},{"empty",P::InvalidImage},{"short",P::InvalidImage},{"oversized",P::InvalidImage},
+            {"unknown-mcu",P::InvalidImage},{"missing-xml",P::UnsupportedPreparation},{"missing-checksum",P::UnsupportedPreparation},
+            {"wrong-ecu",P::WrongEcu},{"wrong-rom",P::WrongRom},{"missing-ecu",P::MissingIdentity},{"missing-rom",P::MissingIdentity},
+            {"missing-policy",P::MissingIdentity},{"invalid-checksum",P::InvalidChecksum},{"unapplied-correction",P::InvalidChecksum}};
+        for(const auto &r:rows) QTest::newRow(qPrintable(r.first))<<r.first<<int(r.second);
+    }
+    void candidateImageReview() {
+        QFETCH(QString,problem); QFETCH(int,expected); auto bytes=cal.FullRomData; auto ids=candidateIds(); QString mcu="SH7058";
+        if(problem=="empty") bytes.clear();
+        if(problem=="short") bytes.chop(1);
+        if(problem=="oversized") bytes+=char(0);
+        if(problem=="unknown-mcu") mcu="SH72531";
+        if(problem=="wrong-ecu") ids.observedEcu="OTHER";
+        if(problem=="wrong-rom") ids.observedRom="OTHER";
+        if(problem=="missing-ecu") ids.observedEcu.clear();
+        if(problem=="missing-rom") ids.observedRom.clear();
+        if(problem=="missing-policy") ids.expectedEcu.clear();
+        if(problem=="invalid-checksum") {put32(bytes,0xffb80,8);put32(bytes,0xffb84,4);put32(bytes,0xffb88,0);}
+        if(problem=="unapplied-correction") for(int i=0;i<17;++i) {put32(bytes,0xffb80+i*12,0);put32(bytes,0xffb84+i*12,4);put32(bytes,0xffb88+i*12,0);}
+        const auto original=bytes;
+        const auto review=OfflineUploadCandidate::reviewImage(bytes,mcu,problem!="missing-xml",problem!="missing-checksum",ids);
+        QCOMPARE(int(review),expected); QCOMPARE(bytes,original);
+        if(review!=OfflineUploadCandidate::Preflight::Accepted) {
+            OfflineUploadCandidate::Uploader candidate(6007);
+            const auto report=candidate.run(review,{},SubaruSH7058::KernelLayout(),{});
+            QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::BlockedPreflight));
+            QVERIFY(report.submittedRequests.isEmpty()); candidateHasNoDestructiveCommands(report);
+        }
+    }
+    void candidateRecordingGuards_data() {
+        QTest::addColumn<QString>("problem");
+        for(const char *p:{"no-profile","no-attempt","missing-exchange","request-mismatch","duplicate-tail","wrong-window"}) QTest::newRow(p)<<QString(p);
+    }
+    void candidateRecordingGuards() {
+        QFETCH(QString,problem); QByteArray prepared;
+        QVERIFY(module->prepare_kernel(QByteArray(128,'K'),0xffff3000,prepared)); auto script=candidateScript(prepared);
+        auto layout=SubaruSH7058::KernelLayout::create(128,0xffff3000,0xffff3000,0x9000);
+        if(problem=="missing-exchange") script.clear();
+        if(problem=="request-mismatch") script[0].request[4]=char(0x36);
+        if(problem=="duplicate-tail") script.append(script.last());
+        if(problem=="wrong-window") layout=SubaruSH7058::KernelLayout::create(128,0x1000,0x1000,0x9000);
+        OfflineKernelModel::SyntheticProfile synthetic; OfflineUploadCandidate::Uploader candidate(problem=="no-attempt"?0:6007);
+        const auto report=candidate.run(OfflineUploadCandidate::Preflight::Accepted,prepared,layout,script,problem=="no-profile"?nullptr:&synthetic);
+        QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::UploadFailed));
+        if(problem!="duplicate-tail") QVERIFY(report.submittedRequests.isEmpty());
+        candidateHasNoDestructiveCommands(report);
     }
 
 };

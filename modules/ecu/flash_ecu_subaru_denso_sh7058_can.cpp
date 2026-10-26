@@ -214,6 +214,15 @@ void FlashEcuSubaruDensoSH7058Can::run()
         QMessageBox::warning(this, tr("ECU Operation"), communication.detail);
         return;
     }
+    // An already-running kernel bypasses upload_kernel(), so the upload gate
+    // alone does not disable programming. No runtime override is provided.
+    if (cmd_type == "write" || cmd_type == "test_write") {
+        communication = CommunicationResult::failure(CommState::Unsupported,
+            "SH7058 programming remains disabled pending protocol, kernel compatibility and recovery review.");
+        emit LOG_E(communication.detail, true, true);
+        report_operation(STATUS_ERROR);
+        return;
+    }
     // Set serial port
     serial->reset_connection();
     serial->set_add_iso14230_header(false);
@@ -263,22 +272,7 @@ void FlashEcuSubaruDensoSH7058Can::run()
                     result = write_mem(test_write);
                 }
             }
-            if (kill_process) result = STATUS_CANCELLED;
-            emit external_logger(operation_succeeded(result) ? "Finished" : "Failed or cancelled");
-            if (kill_process) result = STATUS_CANCELLED;
-            operationResult = result;
-
-            if (operation_succeeded(result))
-            {
-                QMessageBox::information(this, tr("ECU Operation"), "ECU operation was succesful, press OK to exit");
-                this->close();
-            }
-            else
-            {
-                QMessageBox::warning(this, tr("ECU Operation"), result == STATUS_VERIFY_ERROR ? "Verification failed: ECU CRC differs from image. Operation was not successful." :
-                    result == STATUS_CANCELLED ? "Operation cancelled. Commands already submitted may still complete; no recovery has been attempted." :
-                    "ECU operation failed, press OK to exit");
-            }
+            report_operation(result);
 
             break;
         case QMessageBox::Cancel:
@@ -291,6 +285,27 @@ void FlashEcuSubaruDensoSH7058Can::run()
             emit LOG_D("Unknown operation selected!", true, true);
             this->close();
             break;
+    }
+}
+
+void FlashEcuSubaruDensoSH7058Can::report_operation(int status)
+{
+    if (kill_process) status = STATUS_CANCELLED;
+    emit external_logger(operation_succeeded(status) ? "Finished" : "Failed or cancelled");
+    if (kill_process) status = STATUS_CANCELLED;
+    operationResult = status;
+
+    if (operation_succeeded(status))
+    {
+        QMessageBox::information(this, tr("ECU Operation"), "ECU operation was succesful, press OK to exit");
+        this->close();
+    }
+    else
+    {
+        QMessageBox::warning(this, tr("ECU Operation"), status == STATUS_VERIFY_ERROR ? "Verification failed: ECU CRC differs from image. Operation was not successful." :
+            status == STATUS_CANCELLED ? "Operation cancelled. Commands already submitted may still complete; no recovery has been attempted." :
+            communication.state == CommState::Unsupported ? communication.detail :
+            "ECU operation failed, press OK to exit");
     }
 }
 
@@ -1506,7 +1521,8 @@ int FlashEcuSubaruDensoSH7058Can::reflash_block(const uint8_t *newdata, const st
 int FlashEcuSubaruDensoSH7058Can::flash_block(const uint8_t *src, uint32_t start, uint32_t len)
 {
     if (kill_process) return STATUS_CANCELLED;
-    if (!valid_image() || !src || !SubaruSH7058Safety::validRange(start, len) || start % 0x1000 || len % 0x1000) return STATUS_ERROR;
+    if (!valid_image() || !src ||
+        !SubaruSH7058Safety::validSector(&flashdevices[mcu_type_index], start, len)) return STATUS_ERROR;
     QByteArray output;
     QByteArray received;
     QByteArray msg;

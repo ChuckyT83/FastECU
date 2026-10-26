@@ -1,5 +1,9 @@
 # SH7058 offline safety regression
 
+Task 006G's candidate upload orchestration, production-entry gate, sector-range
+guards and their limitations are documented in
+[CANDIDATE_UPLOADER.md](CANDIDATE_UPLOADER.md).
+
 For the separately isolated kernel state-machine experiment, see
 [KERNEL_OFFLINE.md](KERNEL_OFFLINE.md). Its simulated acknowledgements do not
 establish an ECU upload contract or enable the production uploader.

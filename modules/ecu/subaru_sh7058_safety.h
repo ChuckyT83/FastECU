@@ -37,6 +37,14 @@ inline bool validImage(const QByteArray &image, const flashdev_t *map) {
 inline bool validRange(uint32_t start, uint32_t length) {
     return length && start < ImageSize && length <= ImageSize - start;
 }
+// Erase requests identify a whole mapped sector by its start address, not an
+// arbitrary aligned slice. Never infer a new erase geometry from an image range.
+inline bool validSector(const flashdev_t *map, uint32_t start, uint32_t length) {
+    if (!validMap(map)) return false;
+    for (unsigned i = 0; i < map->numblocks; ++i)
+        if (map->fblocks[i].start == start && map->fblocks[i].len == length) return true;
+    return false;
+}
 inline QByteArray fingerprint(const QByteArray &image) {
     return QCryptographicHash::hash(image, QCryptographicHash::Sha256);
 }

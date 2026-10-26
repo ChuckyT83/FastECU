@@ -5,9 +5,10 @@ It has no serial/J2534 backend or I/O callbacks. No production target includes
 `experimental_kernel_transfer.h`. The production `upload_kernel` gate remains
 unchanged and returns Unsupported before any upload request.
 The model also refuses compilation without the dedicated
-`FASTECU_OFFLINE_KERNEL_TESTS` define set only by its test target.
+`FASTECU_OFFLINE_KERNEL_TESTS` define set by the two dedicated offline test
+targets (`kernel_transfer.pro` and `safety.pro`).
 
-The only production addition is `SubaruSH7058::KernelLayout`, used by the existing
+The Task 006F production addition is `SubaruSH7058::KernelLayout`, used by the existing
 preparation function to validate host bounds/padded sizes. It provides exactly
 `preparedSize / 128` nonempty blocks, rejects an index equal to the count, and
 uses wide arithmetic. The SH7058 runtime RAM map is a host memory-safety limit;
@@ -71,3 +72,8 @@ The native Windows runner script includes this Qt Core-only target. Its existing
 native Windows/Fusion GUI configuration is preserved for production safety tests.
 No new native Windows result is implied by modifying a runner script; consult
 the Task 006F report for executed results and platform limitations.
+
+Task 006G adds [the candidate orchestrator](CANDIDATE_UPLOADER.md), exercised by
+the safety target with actual production preparation and a finite mock recording.
+It also gates production write/test-write entry, including an already-running
+kernel, and restricts the existing flash helper to exact selected-map sectors.
