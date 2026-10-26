@@ -9,7 +9,8 @@
 
 // Independently written, software-only candidate. There is no transport
 // interface to implement with hardware, no erase/write hook, and no production
-// target includes this header. All reply grammar is the Task 006F fixture policy.
+// target includes this header. The selected reply profile is either the original
+// synthetic fixture policy or the hash-bound, offline Task 006J firmware grammar.
 namespace OfflineUploadCandidate {
 using namespace OfflineKernelModel;
 enum class Preflight { Accepted, InvalidImage, UnsupportedPreparation, InvalidChecksum,
@@ -67,7 +68,7 @@ public:
     explicit Uploader(quint64 fixtureAttempt) : attempt_(fixtureAttempt) {}
     Attempt run(Preflight preflight, const QByteArray &prepared,
                 const SubaruSH7058::KernelLayout &layout, const QVector<Exchange> &script,
-                const SyntheticProfile *fixtureProfile = nullptr) {
+                const ReplyProfile *fixtureProfile = nullptr) {
         Attempt report;
         if (used_) { report.upload=Outcome::OutOfOrder; report.detail="Attempt cannot be reused"; return report; }
         used_=true;

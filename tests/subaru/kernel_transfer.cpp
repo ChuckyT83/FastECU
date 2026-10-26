@@ -36,6 +36,119 @@ class KernelTransferTest : public QObject {
         QCOMPARE(int(t.outcome()), int(expected)); QVERIFY(!t.simulatedReady());
     }
 private slots:
+    void ownerFirmwareReplies_data() {
+        QTest::addColumn<int>("phase"); QTest::addColumn<QByteArray>("bytes");
+        QTest::addColumn<int>("expected");
+        const auto firmware = ReplyProfile::ownerBaseFirmware();
+        const Phase phases[] = {Phase::Download, Phase::Block, Phase::Exit, Phase::Start};
+        const char *names[] = {"download-1b3c", "block-1c6e", "exit-1c10", "start-1a72"};
+        const int services[] = {0x34, 0xb6, 0x37, 0x31};
+        for (int i = 0; i < 4; ++i) {
+            const auto positive = firmware.expectedReply(phases[i]);
+            auto row = [&](const char *suffix, const QByteArray &bytes, Outcome expected) {
+                QTest::newRow(qPrintable(QString(names[i]) + suffix)) << int(phases[i]) << bytes << int(expected);
+            };
+            row("-exact", positive, Outcome::Running);
+            row("-empty", {}, Outcome::Malformed);
+            row("-truncated", positive.left(positive.size()-1), Outcome::Malformed);
+            row("-extra-application-byte", positive + char(0), Outcome::Malformed);
+            auto unrelated = positive; unrelated[4] = char(uint8_t(unrelated.at(4)) ^ 1);
+            row("-unrelated-service", unrelated, Outcome::Unrelated);
+            auto wrongChannel = positive; wrongChannel[3] = char(0xe9);
+            row("-wrong-can-id", wrongChannel, Outcome::Malformed);
+            for (int nrc : {0x13, 0x22}) {
+                auto negative = QByteArray::fromHex("000007e87f");
+                negative += char(services[i]); negative += char(nrc);
+                const auto suffix = QString("-nrc-%1").arg(nrc,2,16,QLatin1Char('0'));
+                row(qPrintable(suffix), negative, Outcome::Rejected);
+            }
+        }
+        // Synthetic 74 20 omits the two bytes in the actual 0x1FA0 descriptor.
+        QTest::newRow("download-reject-old-synthetic-prefix") << int(Phase::Download)
+            << QByteArray::fromHex("000007e87420") << int(Outcome::Malformed);
+        QTest::newRow("download-format-nrc-12-1b72") << int(Phase::Download)
+            << QByteArray::fromHex("000007e87f3412") << int(Outcome::Rejected);
+        QTest::newRow("start-routine-nrc-12-1ac4") << int(Phase::Start)
+            << QByteArray::fromHex("000007e87f3112") << int(Outcome::Rejected);
+    }
+    void ownerFirmwareReplies() {
+        QFETCH(int, phase); QFETCH(QByteArray, bytes); QFETCH(int, expected);
+        Request request; request.phase=Phase(phase);
+        const char *services[] = {"34", "b6", "37", "31", "beef"};
+        request.bytes=QByteArray::fromHex("000007e0")+QByteArray::fromHex(services[phase]);
+        QCOMPARE(int(ReplyProfile::ownerBaseFirmware().validate(request,bytes)),expected);
+    }
+    void ownerFirmwareDownloadBounds_data() {
+        QTest::addColumn<qlonglong>("size"); QTest::addColumn<uint>("base"); QTest::addColumn<bool>("accepted");
+        // 0x1B9A..0x1BB4 is narrower than the generic 36-KiB runtime RAM map.
+        QTest::newRow("one-block") << 128LL << 0xffff3000u << true;
+        QTest::newRow("bundled-kernel-prepared") << 6528LL << 0xffff3000u << true;
+        QTest::newRow("OEM-download-upper-bound") << 8192LL << 0xffff3000u << true;
+        QTest::newRow("past-OEM-bound") << 8320LL << 0xffff3000u << false;
+        QTest::newRow("runtime-RAM-not-download-permission") << 0x9000LL << 0xffff3000u << false;
+        QTest::newRow("wrong-start-four") << 128LL << 0xffff3004u << false;
+        QTest::newRow("wrong-start-block") << 128LL << 0xffff3080u << false;
+        QTest::newRow("empty-rejected-by-host-policy") << 0LL << 0xffff3000u << false;
+    }
+    void ownerFirmwareDownloadBounds() {
+        QFETCH(qlonglong,size); QFETCH(uint,base); QFETCH(bool,accepted);
+        const auto layout=KernelLayout::create(size,base,0xffff3000u,0x9000u);
+        const auto firmware=ReplyProfile::ownerBaseFirmware();
+        Transfer transfer(QByteArray(layout.preparedSize(),'K'),layout,&firmware);
+        Request request;
+        QCOMPARE(transfer.takeRequest(request),accepted);
+        if (!accepted) QCOMPARE(int(transfer.outcome()),int(Outcome::InvalidLayout));
+    }
+    void ownerFirmwareBundledLayoutTrace() {
+        const auto firmware=ReplyProfile::ownerBaseFirmware();
+        const auto layout=plan(6428);
+        // Synthetic encrypted bytes: never embed the owner's firmware/kernel.
+        const QByteArray prepared(6528,'K');
+        Transfer transfer(prepared,layout,&firmware);
+        int requests=0, blocks=0;
+        while (transfer.outcome()==Outcome::Running && requests<60) {
+            Request request; QVERIFY(transfer.takeRequest(request)); ++requests;
+            if (request.phase==Phase::Download)
+                QCOMPARE(request.bytes,QByteArray::fromHex("000007e0340433ff3000001980"));
+            if (request.phase==Phase::Block) {
+                QCOMPARE(request.bytes.size(),136); // CAN-ID prefix + B6/address + 128
+                const uint32_t address=0xffff3000u+uint32_t(blocks)*128;
+                QByteArray expected=QByteArray::fromHex("000007e0b6");
+                for (int shift=16;shift>=0;shift-=8) expected+=char(address>>shift);
+                expected+=QByteArray(128,'K'); QCOMPARE(request.bytes,expected); ++blocks;
+            }
+            transfer.submitted(request.fixtureToken,result(),1);
+            transfer.received(request.fixtureToken,result(S::Success,firmware.expectedReply(request.phase)));
+        }
+        QCOMPARE(blocks,51); QCOMPARE(requests,55);
+        QCOMPARE(int(transfer.outcome()),int(Outcome::SimulatedReady));
+        Request extra; QVERIFY(!transfer.takeRequest(extra));
+    }
+    void ownerFirmwareDoesNotInventCorrelation() {
+        const auto firmware=ReplyProfile::ownerBaseFirmware();
+        Transfer transfer(QByteArray(128,'K'),plan(128),&firmware);
+        Request request; QVERIFY(transfer.takeRequest(request));
+        transfer.submitted(request.fixtureToken,result(),1);
+        transfer.received(request.fixtureToken,result(S::Success,firmware.expectedReply(request.phase)));
+        QVERIFY(transfer.takeRequest(request)); QCOMPARE(int(request.phase),int(Phase::Block));
+        transfer.submitted(request.fixtureToken,result(),1);
+        // Firmware 0x1D30..0x1D3A emits no address/sequence correlation field.
+        transfer.received(0,result(S::Success,firmware.expectedReply(Phase::Block)));
+        stopped(transfer,Outcome::Uncorrelated);
+        QCOMPARE(transfer.acknowledgedBlocks(),0u);
+    }
+    void ownerFirmwareRejectsEmptyHistoricalBlock() {
+        const auto firmware=ReplyProfile::ownerBaseFirmware();
+        Transfer transfer(QByteArray(128,'K'),plan(128),&firmware);
+        Request request; QVERIFY(transfer.takeRequest(request));
+        transfer.submitted(request.fixtureToken,result(),1);
+        transfer.received(request.fixtureToken,result(S::Success,firmware.expectedReply(request.phase)));
+        QVERIFY(transfer.takeRequest(request));
+        transfer.submitted(request.fixtureToken,result(),1);
+        // 0x1C9A..0x1CA6: anything other than 131 parameter bytes -> 7F B6 13.
+        transfer.received(request.fixtureToken,result(S::Success,QByteArray::fromHex("000007e87fb613")));
+        stopped(transfer,Outcome::Rejected); QCOMPARE(transfer.acknowledgedBlocks(),0u);
+    }
     void layout_data() {
         QTest::addColumn<qlonglong>("size"); QTest::addColumn<uint>("destination");
         QTest::addColumn<uint>("ramStart"); QTest::addColumn<uint>("ramLength"); QTest::addColumn<bool>("valid");

@@ -4,7 +4,8 @@
 #error "Experimental kernel model is restricted to the offline test target"
 #endif
 // TEST ONLY. No serial/J2534 implementation, callback or physical I/O exists
-// here. No production target includes this file. This is not an ECU contract.
+// here. No production target includes this file. Profiles identify their evidence;
+// firmware-derived byte grammar is not hardware validation or authorization.
 #include "../../modules/ecu/subaru_sh7058_kernel_layout.h"
 #include "../../serial_port/communication_result.h"
 
@@ -21,10 +22,9 @@ struct Request {
     QByteArray bytes;
 };
 
-class SyntheticProfile {
+class ReplyProfile {
 public:
-    // These exact lengths are deliberately synthetic, NOT demonstrated ECU
-    // rules. F6 is only a reported positive prefix in the available evidence.
+    // Preserve the original synthetic fixtures for adversarial model tests.
     static QByteArray body(Phase phase) {
         switch (phase) {
         case Phase::Download: return QByteArray::fromHex("7420");
@@ -38,8 +38,47 @@ public:
     static QByteArray reply(Phase phase) {
         return QByteArray::fromHex("000007e8") + body(phase);
     }
+    // Task 006J, owner Base.bin SHA-256:
+    // 15102939df167a4d76be9f33c20966fa4f707bb171aff846c7117108cc9c875c.
+    // File offsets equal CPU flash addresses in these low-flash routines.
+    // 0x1b3c/0x1fa0: RequestDownload -> 74 20 00 84.
+    // 0x1c6e/0x1d30: accepted B6 -> F6 with no parameters.
+    // 0x1c10/0x1c56: transfer exit -> 77.
+    // 0x1a72/0x1f98: checksum-accepted start -> 71 01 02 02, then jump.
+    // 0x11f6 serializes descriptor length + service + parameters; CAN padding
+    // is not part of these reassembled application replies.
+    // This selects analyzed-image evidence, NOT an authenticated OEM identity.
+    // 0x1D40 counts accepted bytes without unique-address coverage; 0x1C4A
+    // accepts count >= length. We retain stricter host sequencing/no retry.
+    // Bare F6 still has no wire correlation: fixture tokens remain mandatory.
+    static ReplyProfile ownerBaseFirmware() {
+        ReplyProfile profile; profile.ownerBase_ = true; return profile;
+    }
+    bool firmwareDerived() const { return ownerBase_; }
+    bool acceptsLayout(const SubaruSH7058::KernelLayout &layout) const {
+        // 0x1b9a..0x1bb4: fixed base, end <= FFFF4FFF, length multiple of 128.
+        // Host policy additionally rejects empty images; this does not model
+        // the firmware's zero-length corner case as a permitted operation.
+        return !ownerBase_ || (layout.valid() && layout.destination() == 0xffff3000u &&
+                              layout.preparedSize() <= 0x2000u);
+    }
+    QByteArray expectedBody(Phase phase) const {
+        if (!ownerBase_) return body(phase);
+        if (phase == Phase::Download) return QByteArray::fromHex("74200084");
+        if (phase == Phase::Readiness) {
+            // Separate uploaded-kernel evidence, NOT an OEM bootloader reply:
+            // bundled kernel SHA-256 5fb9cb8973c6a3746e0e6a3afa328e9db57c66dd8d227ab3872cd2f80946b82e,
+            // 0xFFFF3B0E / 0xFFFF48AC, Task 006I. A banner is not authentication.
+            return QByteArray::fromHex("beef002d41") +
+                QByteArray("FastECU Subaru SH7058 iso15765 Kernel v1.00", 43) + char(0);
+        }
+        return body(phase);
+    }
+    QByteArray expectedReply(Phase phase) const {
+        return QByteArray::fromHex("000007e8") + expectedBody(phase);
+    }
     Outcome validate(const Request &request, const QByteArray &replyBytes) const {
-        if (request.bytes.size() < 5 || body(request.phase).isEmpty() ||
+        if (request.bytes.size() < 5 || expectedBody(request.phase).isEmpty() ||
             replyBytes.size() < 5 || replyBytes.left(4) != QByteArray::fromHex("000007e8"))
             return Outcome::Malformed;
         const auto bytes = replyBytes.mid(4);
@@ -49,20 +88,23 @@ public:
             // No pending/retry policy is established; never advance or wait.
             return uint8_t(bytes.at(2)) == 0x78 ? Outcome::Unsupported : Outcome::Rejected;
         }
-        const auto expected = body(request.phase);
+        const auto expected = expectedBody(request.phase);
         if (bytes.size() != expected.size()) return Outcome::Malformed;
         return bytes == expected ? Outcome::Running : Outcome::Unrelated;
     }
+private:
+    bool ownerBase_ = false;
 };
+using SyntheticProfile = ReplyProfile; // compatibility for explicitly synthetic tests
 
 class Transfer {
 public:
     Transfer(const QByteArray &prepared, const SubaruSH7058::KernelLayout &layout,
-             const SyntheticProfile *profile = nullptr)
+             const ReplyProfile *profile = nullptr)
         : prepared_(prepared.constData(), prepared.size()), layout_(layout),
-          profile_(profile ? *profile : SyntheticProfile()) {
+          profile_(profile ? *profile : ReplyProfile()) {
         if (!profile) stop(Outcome::Unsupported);
-        else if (!layout.valid() || prepared.size() != int(layout.preparedSize()))
+        else if (!layout.valid() || !profile_.acceptsLayout(layout) || prepared.size() != int(layout.preparedSize()))
             stop(Outcome::InvalidLayout);
     }
     Outcome outcome() const { return outcome_; }
@@ -151,7 +193,7 @@ private:
     }
     QByteArray prepared_;
     SubaruSH7058::KernelLayout layout_;
-    SyntheticProfile profile_; // owns the stateless fixture policy; borrows no pointer
+    ReplyProfile profile_; // owns the selected evidence policy; borrows no pointer
     State state_ = State::RequestReady;
     Outcome outcome_ = Outcome::Running;
     Phase phase_ = Phase::Download;

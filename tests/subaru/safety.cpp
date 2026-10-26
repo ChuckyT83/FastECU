@@ -680,11 +680,13 @@ private:
         CommunicationResult r; r.state=CommunicationResult::State::Success;
         r.bytes=bytes; r.hasStatus=true; r.status=0; return r;
     }
-    static QVector<CandidateExchange> candidateScript(const QByteArray &prepared, quint64 attempt=6007) {
+    static QVector<CandidateExchange> candidateScript(const QByteArray &prepared, quint64 attempt=6007,
+            const OfflineKernelModel::ReplyProfile *profile=nullptr) {
         QVector<CandidateExchange> script;
         const auto add=[&](const QByteArray &request, OfflineKernelModel::Phase phase) {
             CandidateExchange e; e.request=request; e.submission=candidateResult();
-            e.response=candidateResult(OfflineKernelModel::SyntheticProfile::reply(phase));
+            e.response=candidateResult(profile ? profile->expectedReply(phase) :
+                OfflineKernelModel::SyntheticProfile::reply(phase));
             e.replyAttempt=attempt; e.replyToken=quint64(script.size()+1); script.append(e);
         };
         QByteArray request=QByteArray::fromHex("000007e0340433ff3000");
@@ -711,6 +713,33 @@ private:
         }
     }
 private slots:
+    void candidateOwnerFirmware_data() {
+        QTest::addColumn<QString>("fault");
+        QTest::newRow("hash-bound-reply-profile")<<QString();
+        QTest::newRow("old-short-download-reply")<<QString("short-download");
+        QTest::newRow("F6-has-no-wire-correlation")<<QString("uncorrelated");
+    }
+    void candidateOwnerFirmware() {
+        QFETCH(QString,fault); QByteArray prepared;
+        QVERIFY(module->prepare_kernel(QByteArray(6428,'K'),0xffff3000,prepared));
+        const auto layout=SubaruSH7058::KernelLayout::create(6428,0xffff3000,0xffff3000,0x9000);
+        const auto firmware=OfflineKernelModel::ReplyProfile::ownerBaseFirmware();
+        auto script=candidateScript(prepared,6007,&firmware);
+        if (fault=="short-download") script[0].response.bytes=QByteArray::fromHex("000007e87420");
+        if (fault=="uncorrelated") script[1].replyToken=0;
+        OfflineUploadCandidate::Uploader candidate(6007);
+        const auto report=candidate.run(OfflineUploadCandidate::Preflight::Accepted,prepared,layout,script,&firmware);
+        if (fault.isEmpty()) {
+            QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::ReadyForOfflineReview));
+            QCOMPARE(report.acknowledgedBlocks,51u); QCOMPARE(report.submittedRequests.size(),55);
+        } else {
+            QCOMPARE(int(report.result),int(OfflineUploadCandidate::Attempt::Result::UploadFailed));
+            QCOMPARE(report.acknowledgedBlocks,0u);
+            QCOMPARE(report.submittedRequests.size(),fault=="short-download"?1:2);
+        }
+        candidateHasNoDestructiveCommands(report); QVERIFY(!report.programmingAllowed());
+        QVERIFY(port.writes.isEmpty()); // candidate exchanges never reach SerialPortActions
+    }
     void candidateNormal_data() {
         QTest::addColumn<int>("length"); for(int n:{4,128,129,6428,0x9000}) QTest::newRow(qPrintable(QString::number(n)))<<n;
     }
