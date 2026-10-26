@@ -177,6 +177,7 @@ public slots:
     void waitForSource(void);
 
 private:
+    friend class SH7058UploadTest;
     SerialPortActionsDirect        *serial_direct;
     SerialPortActionsRemoteReplica *serial_remote;
     QString peerAddress;

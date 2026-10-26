@@ -330,3 +330,7 @@ TRANSLATIONS += \
     hexedit/translations/qhexedit_fr.ts \
     hexedit/translations/qhexedit_it.ts \
     hexedit/translations/qhexedit_ru.ts
+
+# Isolated candidate; no application caller or runtime gate override.
+SOURCES += modules/ecu/subaru_sh7058_upload_candidate.cpp serial_port/sh7058_candidate_link.cpp
+HEADERS += modules/ecu/subaru_sh7058_upload_candidate.h serial_port/sh7058_candidate_link.h

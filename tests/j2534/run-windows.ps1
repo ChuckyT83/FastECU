@@ -86,6 +86,16 @@ try {
         Invoke-Logged -Name 'build-kernel-offline' -File 'nmake.exe' -Arguments @('/NOLOGO')
         Invoke-Logged -Name 'kernel-offline-tests' -File (Join-Path $kernelBuild 'subaru-kernel-offline.exe') -Arguments @('-o', "$(Join-Path $logs 'kernel-offline-results.txt'),txt", '-o', "$(Join-Path $logs 'kernel-offline-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $uploadBuild = Join-Path $build 'upload-candidate'
+    New-Item -ItemType Directory -Force $uploadBuild | Out-Null
+    Copy-Item (Join-Path $build 'mock-j2534.dll') $uploadBuild -Force
+    Push-Location $uploadBuild
+    try {
+        $env:QT_QPA_PLATFORM = 'offscreen'
+        Invoke-Logged -Name 'qmake-upload-candidate' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/upload_candidate.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-upload-candidate' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'upload-candidate-tests' -File (Join-Path $uploadBuild 'sh7058-upload-candidate.exe') -Arguments @('-o', "$(Join-Path $logs 'upload-candidate-results.txt'),txt", '-o', "$(Join-Path $logs 'upload-candidate-results.xml'),junitxml", '-o', '-,txt')
+    } finally { Pop-Location }
     $diagnosticsBuild = Join-Path $build 'diagnostics'
     New-Item -ItemType Directory -Force $diagnosticsBuild | Out-Null
     Copy-Item (Join-Path $build 'mock-j2534.dll') $diagnosticsBuild -Force
@@ -126,6 +136,7 @@ try {
         ('Subaru production safety and offline upload candidate: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
         ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
         ('Synthetic kernel model: ' + ((Get-Content (Join-Path $logs 'kernel-offline-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Production upload candidate: ' + ((Get-Content (Join-Path $logs 'upload-candidate-results.txt') | Select-String 'Totals:') -join ' '))
         ('Driver diagnostics: ' + ((Get-Content (Join-Path $logs 'diagnostics-results.txt') | Select-String 'Totals:') -join ' '))
         ('MSVC toolset: ' + $env:VCToolsVersion)
         (Get-Content (Join-Path $logs 'build-mock.log') | Select-String 'Compiler Version' | Select-Object -First 1)

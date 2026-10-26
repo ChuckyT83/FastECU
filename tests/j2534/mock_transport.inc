@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
-struct MockReadResult { long status; unsigned long count, size, flags, extra; };
+struct MockReadResult { long status; unsigned long count, size, flags, extra; std::vector<unsigned char> bytes; };
 static long mockWriteStatus = 0, mockPeriodicStatus = 0, mockStopStatus = 0, mockIoctlStatus = 0;
 static unsigned long mockWriteCount = 1, mockCalls[6] = {}, mockLastTimeout = 0;
 static unsigned long mockLastSize = 0, mockLastFlags = 0, mockLastChannel = 0;
@@ -22,7 +22,12 @@ EXPORT void PT_CALL MockTransportReset() {
 EXPORT void PT_CALL MockTransportDelay(unsigned long ms) { mockDelay = ms; }
 EXPORT unsigned long PT_CALL MockTransportByte(int i) { return i>=0 && i<PASSTHRU_MSG_DATA_SIZE ? mockPayload[i] : 0; }
 EXPORT void PT_CALL MockTransportWrite(long status, unsigned long count) { mockWriteStatus = status; mockWriteCount = count; }
-EXPORT void PT_CALL MockTransportRead(long status, unsigned long count, unsigned long size, unsigned long flags, unsigned long extra) { mockReads.push_back({status,count,size,flags,extra}); }
+EXPORT void PT_CALL MockTransportRead(long status, unsigned long count, unsigned long size, unsigned long flags, unsigned long extra) { mockReads.push_back({status,count,size,flags,extra,{}}); }
+EXPORT void PT_CALL MockTransportReadBytes(long status, unsigned long count, const unsigned char *data, unsigned long size, unsigned long flags) {
+    MockReadResult result{status,count,size,flags,0,{}};
+    if (data) result.bytes.assign(data,data+std::min<unsigned long>(size,PASSTHRU_MSG_DATA_SIZE));
+    mockReads.push_back(result);
+}
 EXPORT void PT_CALL MockTransportOther(long periodic, long stop, long ioctlStatus) { mockPeriodicStatus = periodic; mockStopStatus = stop; mockIoctlStatus = ioctlStatus; }
 EXPORT void PT_CALL MockTransportFive(unsigned long size, int pointer) { mockFiveSize = size; mockFivePointer = pointer; }
 EXPORT unsigned long PT_CALL MockTransportValue(int index) {
@@ -51,6 +56,7 @@ static long mockRead(unsigned long channel, void *data, unsigned long *count, un
     auto *msg = static_cast<PASSTHRU_MSG *>(data);
     *msg = {}; msg->DataSize = result.size; msg->RxStatus = result.flags; msg->ExtraDataIndex = result.extra;
     std::fill(msg->Data, msg->Data + std::min<unsigned long>(result.size, PASSTHRU_MSG_DATA_SIZE), 0x5a);
+    if (!result.bytes.empty()) std::copy(result.bytes.begin(),result.bytes.end(),msg->Data);
     *count = result.count;
     return result.status;
 }

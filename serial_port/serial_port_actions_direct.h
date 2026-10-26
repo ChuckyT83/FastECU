@@ -171,6 +171,7 @@ private:
     CommunicationResult communication_result(const QByteArray &bytes, bool write);
     friend class J2534ReliabilityTest;
     friend class J2534TransportTest;
+    friend class SH7058UploadTest;
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(A) (sizeof(A)/sizeof((A)[0]))
 #endif
