@@ -27,6 +27,10 @@ GNU make, must already be available. OpenSSL's official MinGW procedure requires
 Unix-path Perl; native Windows Perl fails its platform check. MSYS2 is used only
 to build static crypto with Qt's matching native compiler, not as an application
 runtime dependency.
+The CI runner's minimal MSYS2 image is explicitly updated with its official
+package manager and provisioned with `make`/`perl`; package versions and
+provisioning output are retained. For a local build, install those tools before
+running the packaging script.
 
 ```powershell
 ./tools/windows/package-development.ps1 -OpenSslSource C:/deps/openssl-source `

@@ -46,6 +46,25 @@ jobs:
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false
+      - name: Provision official MSYS2 dependency build tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $pacman = 'C:/msys64/usr/bin/pacman.exe'
+          if (-not (Test-Path $pacman)) { throw 'The Windows runner MSYS2 installation is missing' }
+          New-Item -ItemType Directory -Force build-windows-development/logs | Out-Null
+          foreach ($arguments in @(@('--noconfirm', '-Syu'), @('--noconfirm', '-S', '--needed', 'make', 'perl'))) {
+            & $pacman @arguments 2>&1 | Tee-Object -FilePath build-windows-development/logs/msys2-provision.log -Append
+            if ($LASTEXITCODE -ne 0) {
+              $tail = (Get-Content build-windows-development/logs/msys2-provision.log | Select-Object -Last 12) -join "`n"
+              $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::error title=MSYS2 provisioning failed::$tail"
+              throw 'Official MSYS2 package provisioning failed'
+            }
+          }
+          & $pacman -Q make perl msys2-runtime 2>&1 | Tee-Object -FilePath build-windows-development/logs/msys2-versions.log
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to record MSYS2 build tool versions' }
       - name: Build and package the complete gated application
         shell: pwsh
         run: |
