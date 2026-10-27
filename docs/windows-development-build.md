@@ -35,6 +35,12 @@ QUIC is disabled in this build-only OpenSSL dependency: Qt's matching MinGW 8.1
 headers lack `SIO_UDP_NETRESET`, required by OpenSSL 3.5.5's QUIC code. FastECU
 links static crypto, not this dependency's SSL/QUIC library; this does not qualify
 or alter Qt's independent TLS backend.
+Deployment uses windeployqt's default MinGW debug/release matching. Qt 5.15.2
+cannot reliably distinguish MinGW release plugins using PE debug flags, so
+forcing `--release` can incorrectly exclude `qwindows.dll`. The application
+itself is compiled in release mode. The script checks the SDK platform plugin
+and, when available, probes deployment of SDK `qtdiag.exe` without executing it
+before the source build; the probe is not part of the package.
 
 ```powershell
 ./tools/windows/package-development.ps1 -OpenSslSource C:/deps/openssl-source `

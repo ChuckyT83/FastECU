@@ -37,6 +37,22 @@ if (-not (Test-Path (Join-Path $mingw 'g++.exe'))) { throw 'Qt 5.15.2 x64 MinGW 
 $env:PATH = "$mingw;$env:PATH"
 Invoke-Logged 'qmake-version' 'qmake.exe' @('-v')
 Invoke-Logged 'compiler-version' 'g++.exe' @('--version')
+Invoke-Logged 'qmake-paths' 'qmake.exe' @('-query')
+$qtPlugins = (& qmake.exe -query QT_INSTALL_PLUGINS).Trim()
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $qtPlugins 'platforms/qwindows.dll'))) {
+    throw "Qt SDK Windows platform plugin missing under $qtPlugins"
+}
+# Qt 5.15 cannot reliably classify MinGW DLLs by their PE debug-stripped flag.
+# Keep windeployqt's default MinGW matching instead of forcing --release.
+# Check deployment on a supplied SDK binary without executing it, before the
+# expensive source build. This fixture is not included in the final package.
+$sdkProbe = Join-Path $qtRoot 'bin/qtdiag.exe'
+if (Test-Path $sdkProbe) {
+    $probeDirectory = Join-Path $build 'sdk-deploy-probe'
+    New-Item -ItemType Directory -Force $probeDirectory | Out-Null
+    Copy-Item $sdkProbe $probeDirectory
+    Invoke-Logged 'sdk-deploy-probe' 'windeployqt.exe' @('--compiler-runtime', '--no-translations', (Join-Path $probeDirectory 'qtdiag.exe'))
+}
 $sslPrefix = Join-Path $build 'openssl'
 $sslBuild = Join-Path $build 'openssl-build'
 New-Item -ItemType Directory -Force $sslBuild | Out-Null
@@ -61,7 +77,7 @@ try {
     New-Item -ItemType Directory -Force $package | Out-Null
     Copy-Item $exe $package
     "[Paths]`nPrefix=.`nPlugins=." | Set-Content (Join-Path $package 'qt.conf')
-    Invoke-Logged 'qt-deploy' 'windeployqt.exe' @('--release', '--compiler-runtime', '--no-translations', (Join-Path $package 'FastECU.exe'))
+    Invoke-Logged 'qt-deploy' 'windeployqt.exe' @('--compiler-runtime', '--no-translations', (Join-Path $package 'FastECU.exe'))
     # Archive committed public defaults, never untracked/local configuration.
     & git -C $source diff --quiet HEAD -- config config.qrc
     if ($LASTEXITCODE -ne 0) { throw 'Configuration defaults/resources differ from the reviewed commit' }
