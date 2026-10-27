@@ -128,7 +128,21 @@ try {
         if ($discoveryReport.registry_errors.Count -ne 0) { throw 'Native registry enumeration reported errors' }
         if (($discoveryCode -eq 1) -ne ($discoveryReport.compatible_04_04_count -eq 0)) { throw 'Discovery exit/result mismatch' }
     } finally { Pop-Location }
+    # Retain legacy warnings as evidence; do not suppress them for a green run.
+    $buildWarnings = @(Get-ChildItem $logs -Filter 'build-*.log' | ForEach-Object {
+        $name = $_.Name
+        Get-Content $_.FullName | Where-Object { $_ -match 'warning [CD]\d{4}:' } | ForEach-Object { "$name`: $_" }
+    })
+    $buildWarnings | Set-Content (Join-Path $logs 'compiler-warnings.txt')
+    $candidateWarnings = @($buildWarnings | Where-Object { $_ -like 'build-upload-candidate.log:*' })
+    if ($candidateWarnings.Count -gt 0) {
+        $sample = ($candidateWarnings | Select-Object -Unique | Select-Object -First 8) -join "`n"
+        if ($sample.Length -gt 3000) { $sample = $sample.Substring(0, 3000) }
+        $sample = $sample.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+        Write-Output "::notice title=Candidate compiler warnings::$sample"
+    }
     $evidence = @(
+        ('Compiler warnings (all targets / candidate target): ' + $buildWarnings.Count + ' / ' + $candidateWarnings.Count)
         (Get-Content (Join-Path $logs 'qmake-version.log') | Select-Object -First 2)
         (Get-Content (Join-Path $logs 'loader-test.log') | Select-String 'checks passed')
         ('Initialization: ' + ((Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:') -join ' '))

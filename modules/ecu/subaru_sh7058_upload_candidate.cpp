@@ -1,4 +1,5 @@
 #include "subaru_sh7058_upload_candidate.h"
+#include <QElapsedTimer>
 
 namespace SubaruSH7058 {
 namespace {
@@ -24,7 +25,8 @@ UploadCandidate::Report UploadCandidate::run(UploadLink &link, const QByteArray 
         return true;
     };
     if (cancelled()) return report;
-    if (link.context()!=StreamContext::ControlledOfflineLoader) {
+    const auto generation=link.generation();
+    if (link.context()!=StreamContext::ControlledOfflineLoader || !generation) {
         report.detail="Loader entry and live acknowledgement ownership are unreviewed; no request submitted.";
         return report;
     }
@@ -34,6 +36,13 @@ UploadCandidate::Report UploadCandidate::run(UploadLink &link, const QByteArray 
         report.detail="Requires the pinned 6528-byte/51-block prepared layout and a nonzero configured timeout.";
         return report;
     }
+    struct LeaseRetirement {
+        UploadLink &link;
+        ~LeaseRetirement() { link.retireContext(); }
+    } retirement{link};
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const auto now=[&]() { return clock_ ? clock_->nowMs() : elapsed.elapsed(); };
     // Own the bytes even if the caller supplied QByteArray::fromRawData.
     const QByteArray prepared(input.constData(),input.size());
     auto receive=[&](uint16_t wait) {
@@ -47,7 +56,7 @@ UploadCandidate::Report UploadCandidate::run(UploadLink &link, const QByteArray 
             "Submission callback failed; ECU acceptance is uncertain."); }
     };
     auto ownership=[&]() {
-        if (link.context()==StreamContext::ControlledOfflineLoader) return true;
+        if (link.context()==StreamContext::ControlledOfflineLoader && link.generation()==generation) return true;
         report.outcome=Outcome::OwnershipUncertain;
         report.detail="Stream context lost; an uncorrelated reply cannot establish ownership.";
         return false;
@@ -76,8 +85,18 @@ UploadCandidate::Report UploadCandidate::run(UploadLink &link, const QByteArray 
             return false;
         }
         if (!ownership()) return false;
+        const auto began=now();
         report.transport=receive(timeout);
+        const auto ended=now();
         if (cancelled() || !ownership()) return false;
+        // A driver returning late success cannot extend the application deadline.
+        // Keep the raw result for diagnostics; do not accept/retry an uncertain F6.
+        // Normal driver timeout remains Timeout (including scheduler overrun).
+        if (ended<began || (report.transport.ok() && ended-began>=timeout)) {
+            report.outcome=Outcome::DeadlineExceeded;
+            report.detail="Reply delivered outside the host deadline; transfer lease abandoned, no retry.";
+            return false;
+        }
         if (!report.transport.ok()) {
             using State=CommunicationResult::State;
             switch (report.transport.state) {

@@ -8,7 +8,9 @@ class SerialPortActions;
 class SH7058CandidateLink final : public SubaruSH7058::UploadLink {
 public:
     explicit SH7058CandidateLink(SerialPortActions &serial) : serial_(serial) {}
-    SubaruSH7058::StreamContext context() const override { return SubaruSH7058::StreamContext::Unreviewed; }
+    SubaruSH7058::StreamContext context() const noexcept override { return SubaruSH7058::StreamContext::Unreviewed; }
+    quint64 generation() const noexcept override { return 0; }
+    void retireContext() noexcept override {} // already permanently Unreviewed
     CommunicationResult submit(const QByteArray &bytes) override;
     CommunicationResult receive(uint16_t timeout) override;
 private:

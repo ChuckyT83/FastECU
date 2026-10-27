@@ -24,6 +24,11 @@ using C=SubaruSH7058::UploadCandidate;
 using Context=SubaruSH7058::StreamContext;
 using Cancel=SubaruSH7058::UploadCancellation;
 
+class FakeUploadClock : public SubaruSH7058::UploadClock {
+public:
+    qint64 ms=0;
+    qint64 nowMs() const noexcept override { return ms; }
+};
 // Controlled provenance belongs to this test fixture, never to an F6 token.
 // Every I/O operation still traverses the production facade/direct/J2534 path.
 class ControlledLink : public SubaruSH7058::UploadLink {
@@ -31,6 +36,10 @@ public:
     SH7058CandidateLink actual;
     Context evidence=Context::ControlledOfflineLoader;
     QString fault;
+    quint64 epoch=1;
+    bool retired=false;
+    int outstanding=0,maximumOutstanding=0;
+    FakeUploadClock clock;
     Cancel *cancel=nullptr;
     QVector<QByteArray> sent, apiSent;
     std::function<void(long,unsigned long)> tx;
@@ -38,13 +47,17 @@ public:
     std::function<void(long,unsigned long,const unsigned char*,unsigned long,unsigned long)> rxBytes;
     std::function<unsigned long(int)> value, byte;
     explicit ControlledLink(SerialPortActions &port):actual(port) {}
-    Context context() const override { return evidence; }
+    Context context() const noexcept override { return evidence; }
+    quint64 generation() const noexcept override { return epoch; }
+    void retireContext() noexcept override { retired=true; evidence=Context::Unreviewed; }
     CommunicationResult submit(const QByteArray &bytes) override {
         sent.append(bytes);const bool block=uint8_t(bytes.at(4))==0xb6;
         if (block && fault=="submit-exception") throw std::runtime_error("fixture");
         tx(block && fault=="write-error"?ERR_FAILED:STATUS_NOERROR,
            block && fault=="zero-write"?0:block && fault=="invalid-count"?2:1);
-        auto result=actual.submit(bytes);QByteArray payload;
+        auto result=actual.submit(bytes);
+        if(result.ok()) { ++outstanding; maximumOutstanding=qMax(maximumOutstanding,outstanding); }
+        QByteArray payload;
         for(unsigned long i=0;i<value(7);++i) payload+=char(byte(int(i)));
         apiSent.append(payload);
         if(fault=="cancel-after-submit" && block) cancel->requested=true;
@@ -91,6 +104,11 @@ public:
                 reinterpret_cast<const unsigned char*>(bytes.constData()),bytes.size(),0);
         }
         const auto result=actual.receive(timeout);
+        if(result.ok()) --outstanding;
+        if(sid==0xb6 && fault=="replaced-context") ++epoch;
+        if((sid==0xb6 && fault=="late-success") || (sid==0x31 && fault=="late-start")) clock.ms+=timeout;
+        if(sid==0xb6 && fault=="in-deadline") clock.ms+=timeout-1;
+        if(sid==0xb6 && fault=="clock-regressed") --clock.ms;
         if(fault=="cancel-after-final-block" && sent.size()==52) cancel->requested=true;
         return result;
     }
@@ -142,8 +160,9 @@ private slots:
         Cancel cancel;ControlledLink link(*facade);configure(link,cancel);C candidate;
         const auto report=candidate.run(link,QByteArray(6528,'K'),layout(),100,cancel);
         QCOMPARE(int(report.outcome),int(C::Outcome::ReadyForOfflineReview));
+        QCOMPARE(link.maximumOutstanding,1);QCOMPARE(link.outstanding,0);
         QCOMPARE(report.acknowledgedBlocks,51u);QCOMPARE(report.submissions,55u);QCOMPARE(link.sent,link.apiSent);
-        QVERIFY(report.startupAcknowledged && report.kernelResponding);
+        QVERIFY(report.startupAcknowledged && report.kernelResponding);QVERIFY(link.retired);
         QCOMPARE(link.sent.first(),QByteArray::fromHex("000007e0340433ff3000001980"));
         for(int i=0;i<51;++i){
             auto expected=QByteArray::fromHex("000007e0b6");const uint32_t address=0xffff3000u+uint32_t(i)*128;
@@ -164,6 +183,11 @@ private slots:
         row("negative",C::Outcome::Rejected,2);row("pending",C::Outcome::Unsupported,2);row("unrelated-negative",C::Outcome::Unrelated,2);
         row("wrong-id",C::Outcome::Malformed,2);row("late-ambiguous-F6",C::Outcome::OwnershipUncertain,2);
         row("write-error",C::Outcome::SubmissionUncertain,2);row("zero-write",C::Outcome::SubmissionUncertain,2);row("invalid-count",C::Outcome::SubmissionUncertain,2);
+        row("replaced-context",C::Outcome::OwnershipUncertain,2);
+        row("late-success",C::Outcome::DeadlineExceeded,2);
+        row("late-start",C::Outcome::DeadlineExceeded,54);
+        row("in-deadline",C::Outcome::ReadyForOfflineReview,55);
+        row("clock-regressed",C::Outcome::DeadlineExceeded,2);
         row("timeout",C::Outcome::Timeout,2);row("disconnect",C::Outcome::TransportFailure,2);
         row("cancel-after-submit",C::Outcome::Cancelled,2);row("cancel-read",C::Outcome::Cancelled,2);row("cancel-after-final-block",C::Outcome::Cancelled,52);
         row("exit-negative",C::Outcome::Rejected,53);row("start-timeout",C::Outcome::ReadyAfterUncertainStartReviewRequired,55);
@@ -177,9 +201,16 @@ private slots:
         row("read-error",C::Outcome::TransportFailure,2);
     }
     void faults(){
-        QFETCH(QString,fault);QFETCH(int,outcome);QFETCH(int,submissions);Cancel cancel;ControlledLink link(*facade);configure(link,cancel);link.fault=fault;C candidate;
+        QFETCH(QString,fault);QFETCH(int,outcome);QFETCH(int,submissions);Cancel cancel;ControlledLink link(*facade);configure(link,cancel);link.fault=fault;C candidate(&link.clock);
         const auto report=candidate.run(link,QByteArray(6528,'K'),layout(),100,cancel);
         QCOMPARE(int(report.outcome),outcome);QCOMPARE(link.sent.size(),submissions);QVERIFY(!report.programmingAllowed());
+        QVERIFY(link.retired);
+        const auto sentBefore=link.sent.size();
+        C fresh;
+        const auto resumed=fresh.run(link,QByteArray(6528,'K'),layout(),100,cancel);
+        QCOMPARE(int(resumed.outcome),int(cancel.requested.load()?C::Outcome::Cancelled:C::Outcome::EntryBlocked));
+        QCOMPARE(link.sent.size(),sentBefore);
+        if(fault=="late-success" || fault=="late-start") QVERIFY(report.transport.ok()); // raw success is retained, not accepted
         if(fault=="start-timeout"){
             QVERIFY(!report.startupAcknowledged);QVERIFY(report.kernelResponding);
             QCOMPARE(int(report.startupTransport.state),int(CommunicationResult::State::Timeout));
@@ -203,6 +234,12 @@ private slots:
         auto plan=SubaruSH7058::KernelLayout::create(size,base,0xffff3000,0x9000);
         const auto report=candidate.run(link,QByteArray(size,'K'),plan,100,cancel);
         QCOMPARE(int(report.outcome),int(C::Outcome::InvalidImage));QVERIFY(link.sent.isEmpty());
+    }
+    void missingSessionGeneration(){
+        Cancel cancel;ControlledLink link(*facade);configure(link,cancel);link.epoch=0;C candidate;
+        const auto report=candidate.run(link,QByteArray(6528,'K'),layout(),100,cancel);
+        QCOMPARE(int(report.outcome),int(C::Outcome::EntryBlocked));QVERIFY(link.sent.isEmpty());
+        QVERIFY(!link.retired);QCOMPARE(value(1),0UL);
     }
     void cancelBeforeEntry(){
         Cancel cancel;cancel.requested=true;SH7058CandidateLink link(*facade);C candidate;

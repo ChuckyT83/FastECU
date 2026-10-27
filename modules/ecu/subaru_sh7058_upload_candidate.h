@@ -12,16 +12,27 @@ enum class StreamContext { Unreviewed, ControlledOfflineLoader };
 class UploadLink {
 public:
     virtual ~UploadLink() = default;
-    virtual StreamContext context() const = 0;
+    virtual StreamContext context() const noexcept = 0;
+    // Local lifecycle fence, not an ECU response correlation field. Zero means
+    // no reviewed lease. A changed/replaced channel must get a new generation.
+    virtual quint64 generation() const noexcept = 0;
+    // Consume the loader lease on every attempt, including successful startup.
+    // This does not flush/reset a device or imply an uncertain ECU command stopped.
+    virtual void retireContext() noexcept = 0;
     virtual CommunicationResult submit(const QByteArray &bytes) = 0;
     virtual CommunicationResult receive(uint16_t timeout) = 0;
+};
+class UploadClock {
+public:
+    virtual ~UploadClock() = default;
+    virtual qint64 nowMs() const noexcept = 0; // monotonic; injectable for deterministic tests
 };
 struct UploadCancellation { std::atomic<bool> requested{false}; };
 class UploadCandidate {
 public:
     enum class Phase { Entry, Download, Block, Exit, Start, Readiness };
     enum class Outcome { EntryBlocked, InvalidImage, Reused, Cancelled, TransportFailure,
-        SubmissionUncertain, Timeout, Malformed, Unrelated, Rejected, Unsupported,
+        SubmissionUncertain, Timeout, DeadlineExceeded, Malformed, Unrelated, Rejected, Unsupported,
         OwnershipUncertain, StartupUncertain, ReadyForOfflineReview,
         ReadyAfterUncertainStartReviewRequired };
     enum class Startup { NotRequested, Submitted, Acknowledged, Uncertain, Failed, KernelResponding };
@@ -39,6 +50,9 @@ public:
         QString detail;
         bool programmingAllowed() const { return false; }
     };
+    explicit UploadCandidate(const UploadClock *clock = nullptr) : clock_(clock) {}
+    // The caller exclusively owns link throughout run(); generation is a lifecycle
+    // fence, not a substitute for synchronization or proof against delayed traffic.
     // Input is the existing prepare_kernel encrypted output, never a new crypto
     // strategy. This candidate is intentionally restricted to the pinned 6528-
     // byte prepared kernel layout (51 blocks). No security/session requests exist.
@@ -47,6 +61,7 @@ public:
                const UploadCancellation &cancellation);
     static QByteArray kernelIdentityReply();
 private:
+    const UploadClock *clock_;
     std::atomic<bool> used_{false};
 };
 }
