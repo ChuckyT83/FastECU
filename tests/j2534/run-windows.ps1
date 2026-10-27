@@ -41,6 +41,7 @@ try {
     # /Bv records the actual compiler version; /MD matches the release Qt runtime.
     Invoke-Logged -Name 'build-mock' -File 'cl.exe' -Arguments @('/nologo', '/Bv', '/W4', '/std:c++14', '/EHsc', '/MD', '/D_CRT_SECURE_NO_WARNINGS', '/LD', $mock, '/Fe:mock-j2534.dll')
     Invoke-Logged -Name 'build-incomplete-mock' -File 'cl.exe' -Arguments @('/nologo', '/W4', '/std:c++14', '/EHsc', '/MD', '/D_CRT_SECURE_NO_WARNINGS', '/DOMIT_IOCTL', '/LD', $mock, '/Fe:incomplete-j2534.dll')
+    Invoke-Logged -Name 'build-incomplete-device-mock' -File 'cl.exe' -Arguments @('/nologo', '/W4', '/std:c++14', '/EHsc', '/MD', '/D_CRT_SECURE_NO_WARNINGS', '/DOMIT_VERSION', '/LD', $mock, '/Fe:incomplete-device-j2534.dll')
     Invoke-Logged -Name 'build-loader' -File 'cl.exe' -Arguments @('/nologo', '/W4', '/std:c++14', '/EHsc', '/MD', '/D_CRT_SECURE_NO_WARNINGS', (Join-Path $source 'tests/j2534/loader.cpp'), (Join-Path $source 'serial_port/J2534_win.cpp'), '/Fe:loader-test.exe')
     Invoke-Logged -Name 'loader-test' -File (Join-Path $build 'loader-test.exe') -Arguments @((Join-Path $build 'mock-j2534.dll'), (Join-Path $build 'incomplete-j2534.dll'))
     Invoke-Logged -Name 'qmake-tests' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/j2534/windows.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
@@ -100,6 +101,7 @@ try {
     New-Item -ItemType Directory -Force $diagnosticsBuild | Out-Null
     Copy-Item (Join-Path $build 'mock-j2534.dll') $diagnosticsBuild -Force
     Copy-Item (Join-Path $build 'incomplete-j2534.dll') $diagnosticsBuild -Force
+    Copy-Item (Join-Path $build 'incomplete-device-j2534.dll') $diagnosticsBuild -Force
     Push-Location $diagnosticsBuild
     try {
         Invoke-Logged -Name 'qmake-diagnostics' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/j2534/diagnostics.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
@@ -126,7 +128,7 @@ try {
         $discoveryReport = ($discovery -join "`n") | ConvertFrom-Json
         if ($discoveryReport.validation_level -ne 'discovery_only' -or $discoveryReport.device_opened -or $discoveryReport.ecu_communication) { throw 'Discovery exceeded passive capability' }
         if ($discoveryReport.registry_errors.Count -ne 0) { throw 'Native registry enumeration reported errors' }
-        if (($discoveryCode -eq 1) -ne ($discoveryReport.compatible_04_04_count -eq 0)) { throw 'Discovery exit/result mismatch' }
+        if ($discoveryCode -ne 0 -or -not $discoveryReport.ok) { throw 'Passive discovery failed; an empty driver list is a successful inspection, not device compatibility' }
     } finally { Pop-Location }
     # Retain legacy warnings as evidence; do not suppress them for a green run.
     $buildWarnings = @(Get-ChildItem $logs -Filter 'build-*.log' | ForEach-Object {

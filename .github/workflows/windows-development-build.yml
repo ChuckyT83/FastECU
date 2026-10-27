@@ -6,6 +6,11 @@ on:
     paths:
       - '.github/workflows/windows-development-build.yml'
       - 'tools/windows/**'
+      - 'tools/j2534_diagnostics/**'
+      - 'tests/j2534/**'
+      - 'docs/adapter-arrival-checklist.md'
+      - 'docs/j2534-diagnostic-command-reference.md'
+      - 'docs/adapter-diagnostics-troubleshooting.md'
       - 'FastECU.pro'
       - '**/*.cpp'
       - '**/*.h'
@@ -15,6 +20,50 @@ on:
 permissions:
   contents: read
 jobs:
+  diagnostic-x86:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Check out selected revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Select Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Install matching x86 Qt Core SDK and MinGW tools
+        uses: jurplel/install-qt-action/action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '5.15.2'
+          host: windows
+          target: desktop
+          arch: win32_mingw81
+          archives: qtbase qttools
+          tools: 'tools_mingw,qt.tools.win32_mingw810'
+          aqtversion: '==3.3.0'
+          py7zrversion: '==1.0.0'
+          cache: false
+      - name: Build, mock-test and package x86 diagnostics
+        shell: pwsh
+        run: ./tools/windows/diagnostics-toolkit.ps1 -Architecture x86 -BuildDirectory build-diagnostics-x86
+      - name: Retain x86 diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: diagnostic-evidence-x86-${{ github.sha }}
+          path: |
+            build-diagnostics-x86/logs/
+            aqtinstall.log
+          retention-days: 14
+      - name: Retain successfully tested x86 toolkit
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: j2534-diagnostics-x86-${{ github.sha }}
+          path: build-diagnostics-x86/package/
+          if-no-files-found: error
+          retention-days: 14
   full-mingw-x64:
     runs-on: windows-2022
     timeout-minutes: 45
@@ -46,6 +95,16 @@ jobs:
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false
+      - name: Build, mock-test and package x64 diagnostics
+        shell: pwsh
+        run: ./tools/windows/diagnostics-toolkit.ps1 -Architecture x64 -BuildDirectory build-diagnostics-x64
+      - name: Retain independently usable x64 toolkit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: j2534-diagnostics-x64-${{ github.sha }}
+          path: build-diagnostics-x64/package/
+          if-no-files-found: error
+          retention-days: 14
       - name: Provision official MSYS2 dependency build tools
         shell: pwsh
         run: |
@@ -77,6 +136,28 @@ jobs:
             Write-Output "::error title=Full application build failure::$message"
             throw
           }
+      - name: Collect x86 toolkit if its independent job completed
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0, reviewed source
+        with:
+          pattern: j2534-diagnostics-x86-${{ github.sha }}
+          path: optional-diagnostic-kits
+          merge-multiple: true
+      - name: Add tested diagnostics and arrival instructions to development package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = 'build-windows-development/FastECU-offline-development-x64'
+          New-Item -ItemType Directory -Force "$package/diagnostics/x64" | Out-Null
+          Copy-Item build-diagnostics-x64/package/* "$package/diagnostics/x64" -Recurse
+          if (Test-Path optional-diagnostic-kits/fastecu-j2534-diagnostics.exe) {
+            New-Item -ItemType Directory -Force "$package/diagnostics/x86" | Out-Null
+            Copy-Item optional-diagnostic-kits/* "$package/diagnostics/x86" -Recurse
+          } else {
+            'x86 toolkit not included in this archive; consult its independent job/artifact. x64 remains usable.' | Set-Content "$package/X86-TOOLKIT-STATUS.txt"
+          }
+          Copy-Item tools/windows/collect-adapter-diagnostics.ps1 $package
+          Copy-Item docs/adapter-arrival-checklist.md,docs/j2534-diagnostic-command-reference.md,docs/adapter-diagnostics-troubleshooting.md $package
+          Get-ChildItem $package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 500 | Set-Content build-windows-development/logs/package-sha256.txt
       - name: Report installer failures
         if: failure()
         shell: pwsh
@@ -102,6 +183,7 @@ jobs:
           name: FastECU-offline-development-x64-${{ github.sha }}
           path: |
             build-windows-development/logs/
+            build-diagnostics-x64/logs/
             aqtinstall.log
           if-no-files-found: warn
           retention-days: 14

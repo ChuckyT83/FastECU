@@ -1,9 +1,11 @@
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QLibrary>
+#include "../../tools/j2534_diagnostics/operation_policy.h"
 #include "../../serial_port/j2534_diagnostics.h"
 #ifdef Q_OS_WIN
 #include "../../tools/j2534_diagnostics/windows_device_api.h"
+#include "../../serial_port/J2534_tactrix_win.h"
 #endif
 using namespace J2534Diagnostics;
 class FakeDevice : public DeviceOnlyApi {
@@ -25,8 +27,9 @@ class DiagnosticsTest : public QObject {
     QTemporaryDir directory;
     Driver driver;
     static QByteArray pe(unsigned machine) {
-        QByteArray bytes(128,'\0');bytes[0]='M';bytes[1]='Z';bytes[60]=64;
+        QByteArray bytes(512,'\0');bytes[0]='M';bytes[1]='Z';bytes[60]=64;
         bytes.replace(64,4,QByteArray("PE\0\0",4));bytes[68]=char(machine);bytes[69]=char(machine>>8);
+        bytes[70]=1;bytes[84]=char(machine==0x14c?224:240);
         bytes[86]=0;bytes[87]=0x20; // IMAGE_FILE_DLL
         bytes[88]=0x0b;bytes[89]=machine==0x14c?1:2;
         return bytes;
@@ -36,7 +39,7 @@ private slots:
     void init(){driver={};driver.path=directory.filePath("fixture.dll");driver.api="04.04";write(pe(nativeMachine()));}
     void inspect_data() {
         QTest::addColumn<QString>("fault");
-        for(const char *f:{"valid","missing","relative","empty","nul","not-pe","bad-offset","bad-signature","not-dll","wrong-machine","inconsistent"})QTest::newRow(f)<<QString(f);
+        for(const char *f:{"valid","missing","relative","empty","nul","not-pe","bad-offset","bad-signature","not-dll","wrong-machine","inconsistent","optional-size","sections","truncated","unsupported"})QTest::newRow(f)<<QString(f);
     }
     void inspect() {
         QFETCH(QString,fault);auto bytes=pe(nativeMachine());
@@ -50,6 +53,10 @@ private slots:
         else if(fault=="not-dll"){bytes[87]=0;write(bytes);}
         else if(fault=="wrong-machine")write(pe(nativeMachine()==0x8664?0x14c:0x8664));
         else if(fault=="inconsistent"){bytes[89]=0;write(bytes);}
+        if(fault=="optional-size"){bytes[84]=1;write(bytes);}
+        if(fault=="sections"){bytes[70]=char(97);write(bytes);}
+        if(fault=="truncated")write(bytes.left(100));
+        if(fault=="unsupported"){bytes[68]=char(0xff);bytes[69]=char(0xff);write(bytes);}
         J2534Diagnostics::inspect(driver);QCOMPARE(driver.issue.isEmpty(),fault=="valid");
     }
     void registryEntries() {
@@ -85,6 +92,29 @@ private slots:
         if(fault=="close")QVERIFY(!report["cleanup_confirmed"].toBool());
         if(fault=="version"||fault=="malformed-version")QVERIFY(report.contains("metadata_warning"));
     }
+    void processArchitecture() {const auto expected=QSysInfo::buildCpuArchitecture();QCOMPARE(nativeMachine(),expected=="x86_64"?0x8664u:expected=="i386"?0x14cu:expected=="arm64"?0xaa64u:0u);}
+    void metadataAndPrivacy() {
+        const auto metadata=DiagnosticReport::fileInfo(driver.path);QVERIFY(metadata["exists"].toBool());
+        QCOMPARE(metadata["sha256"].toString(),QString::fromLatin1(QCryptographicHash::hash(pe(nativeMachine()),QCryptographicHash::Sha256).toHex()));
+        const QJsonObject raw{{"dll_path","C:/Users/SyntheticOwner/private/fixture.dll"},{"device_instance_id","USB\\VID_1234&PID_5678\\PRIVATE-SERIAL"}};
+        const auto redacted=DiagnosticReport::redact(raw,false).toObject();QVERIFY(!QJsonDocument(redacted).toJson().contains("SyntheticOwner"));QVERIFY(!QJsonDocument(redacted).toJson().contains("PRIVATE-SERIAL"));
+        QCOMPARE(DiagnosticReport::redact(raw,true).toObject(),raw);
+        QVERIFY(!DiagnosticReport::fileInfo(directory.path())["exists"].toBool());
+    }
+    void executableInspection() {auto bytes=pe(nativeMachine());bytes[87]=0;write(bytes);J2534Diagnostics::inspect(driver,nativeMachine(),false);QVERIFY(driver.issue.isEmpty());QVERIFY(!driver.isDll);}
+    void networkPathsNotAccessed() {driver.path="//unreachable.invalid/share/driver.dll";J2534Diagnostics::inspect(driver);QVERIFY(driver.issue.contains("Network"));QVERIFY(!DiagnosticReport::fileInfo(driver.path)["exists"].toBool());}
+    void devicePolicy_data() {
+        QTest::addColumn<QString>("kind");QTest::addColumn<bool>("disconnected");QTest::addColumn<bool>("reviewed");QTest::addColumn<QString>("hash");QTest::addColumn<bool>("allowed");
+        QTest::newRow("explicit-reviewed-obdx")<<QString("obdx-pro-vx")<<true<<true<<QString(64,'a')<<true;
+        QTest::newRow("clone-blocked")<<QString("openport-clone")<<true<<true<<QString(64,'a')<<false;
+        QTest::newRow("unreviewed-blocked")<<QString("unreviewed")<<true<<true<<QString(64,'a')<<false;
+        QTest::newRow("vehicle-ack-missing")<<QString("obdx-pro-vx")<<false<<true<<QString(64,'a')<<false;
+        QTest::newRow("firmware-behavior-unknown")<<QString("obdx-pro-vx")<<true<<false<<QString(64,'a')<<false;
+        QTest::newRow("hash-missing")<<QString("obdx-pro-vx")<<true<<true<<QString()<<false;
+        QTest::newRow("hash-invalid")<<QString("obdx-pro-vx")<<true<<true<<QString(64,'x')<<false;
+    }
+    void devicePolicy() {QFETCH(QString,kind);QFETCH(bool,disconnected);QFETCH(bool,reviewed);QFETCH(QString,hash);QFETCH(bool,allowed);QCOMPARE(DiagnosticReport::devicePolicy(driver,kind,disconnected,reviewed,hash).isEmpty(),allowed);}
+    void openPortAlwaysPassive() {driver.description="Tactrix OpenPort 2.0";QVERIFY(!DiagnosticReport::devicePolicy(driver,"obdx-pro-vx",true,true,QString(64,'a')).isEmpty());}
     void identificationBlocked() {const auto plan=identificationPlan();QVERIFY(!plan["ok"].toBool());QVERIFY(!plan["ecu_communication"].toBool());QVERIFY(plan["allowed_requests"].toArray().isEmpty());}
     void sinkDisabled() {J2534Trace trace;QVERIFY(!trace.enabled());trace.record("test");QVERIFY(!trace.failed());}
     void sinkOversizedRecord() {
@@ -103,16 +133,17 @@ private slots:
         quint64 last=0;while(!file.atEnd()){const auto o=QJsonDocument::fromJson(file.readLine()).object();QVERIFY(!o.isEmpty());if(o.contains("sequence")){const auto seq=o["sequence"].toString().toULongLong();QVERIFY(seq>last);last=seq;}}
     }
 #ifdef Q_OS_WIN
-    void nativeMockDevice_data(){QTest::addColumn<QString>("fault");for(const char *f:{"success","open","close","version","missing-exports","invalid-dll"})QTest::newRow(f)<<QString(f);}
+    void nativeMockDevice_data(){QTest::addColumn<QString>("fault");for(const char *f:{"success","open","close","version","missing-exports","invalid-dll","no-ioctl"})QTest::newRow(f)<<QString(f);}
     void nativeMockDevice() {
-        QFETCH(QString,fault);QLibrary mock(QDir::current().absoluteFilePath("mock-j2534.dll"));QVERIFY(mock.load());
+        QFETCH(QString,fault);const auto file=fault=="no-ioctl"?"incomplete-j2534.dll":fault=="missing-exports"?"incomplete-device-j2534.dll":"mock-j2534.dll";
+        QLibrary mock(QDir::current().absoluteFilePath(file));QVERIFY(mock.load());
         auto reset=reinterpret_cast<void(PT_CALL*)()>(mock.resolve("MockReset"));
         auto fail=reinterpret_cast<void(PT_CALL*)(const char*)>(mock.resolve("MockSetFailure"));
         auto calls=reinterpret_cast<const char*(PT_CALL*)()>(mock.resolve("MockTrace"));QVERIFY(reset&&fail&&calls);reset();
         const auto f=fault.toLatin1();if(fault!="success")fail(f.constData());
-        if(fault!="invalid-dll")driver.path=fault=="missing-exports"?QDir::current().absoluteFilePath("incomplete-j2534.dll"):mock.fileName();
+        if(fault!="invalid-dll")driver.path=mock.fileName();
         WindowsDeviceApi api;const auto report=validateDevice(driver,true,true,api);
-        QCOMPARE(report["ok"].toBool(),fault=="success"||fault=="version");
+        QCOMPARE(report["ok"].toBool(),fault=="success"||fault=="version"||fault=="no-ioctl");
         const QByteArray trace(calls());QVERIFY(!trace.contains("connect"));QVERIFY(!trace.contains("filter"));
         QCOMPARE(trace.count("close:"),fault=="open"||fault=="missing-exports"||fault=="invalid-dll"?0:1);
     }
