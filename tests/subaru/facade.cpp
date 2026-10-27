@@ -48,6 +48,7 @@ private slots:
         QCOMPARE(int(read.state),int(CommunicationResult::State::Unsupported));
         QVERIFY(!write.hasStatus); QVERIFY(!read.hasStatus);
         QVERIFY(write.bytes.isEmpty()); QVERIFY(read.bytes.isEmpty());
+        QVERIFY(!facade.get_is_tx_done()); // unknown remote completion is never true
         // No slot_sync/default QVariant conversion is involved in either call.
     }
 };
