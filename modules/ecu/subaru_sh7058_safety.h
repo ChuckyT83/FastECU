@@ -37,13 +37,27 @@ inline bool validImage(const QByteArray &image, const flashdev_t *map) {
 inline bool validRange(uint32_t start, uint32_t length) {
     return length && start < ImageSize && length <= ImageSize - start;
 }
+// The pinned kernel selects one of these 16 physical erase sectors, even when
+// an image/compare map presents the ROM as one aggregate region. Never use an
+// aggregate or rearranged map as an erase plan; do not change the map itself.
+inline bool validProgrammingMap(const flashdev_t *map) {
+    if (!validMap(map) || map->numblocks != 16) return false;
+    for (unsigned i=0; i<16; ++i)
+        if (map->fblocks[i].start != fblocks_SH7058[i].start ||
+            map->fblocks[i].len != fblocks_SH7058[i].len) return false;
+    return true;
+}
 // Erase requests identify a whole mapped sector by its start address, not an
 // arbitrary aligned slice. Never infer a new erase geometry from an image range.
 inline bool validSector(const flashdev_t *map, uint32_t start, uint32_t length) {
-    if (!validMap(map)) return false;
+    if (!validProgrammingMap(map)) return false;
     for (unsigned i = 0; i < map->numblocks; ++i)
         if (map->fblocks[i].start == start && map->fblocks[i].len == length) return true;
     return false;
+}
+inline bool preservesInput(const ChecksumEcuSubaruDensoSH7xxx::Result &result, const QByteArray &original) {
+    return result.usable() && result.state != ChecksumEcuSubaruDensoSH7xxx::State::Corrected &&
+        result.image == original;
 }
 inline QByteArray fingerprint(const QByteArray &image) {
     return QCryptographicHash::hash(image, QCryptographicHash::Sha256);
@@ -53,7 +67,7 @@ inline ChecksumEcuSubaruDensoSH7xxx::Result prepare(const QByteArray &image, con
     using C = ChecksumEcuSubaruDensoSH7xxx;
     if (!validImage(image, memoryMap(mcu))) return {C::State::Invalid, {}};
     if (!definition || !checksum) return {C::State::Unsupported, {}};
-    return C::evaluate(image, 0x0FFB80, 17 * 12);
+    return C::evaluate(image, 0x0FFB80, 17 * 12, 0, C::EndpointPolicy::AlignedOrLastByte);
 }
 }
 #endif

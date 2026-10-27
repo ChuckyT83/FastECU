@@ -2,6 +2,7 @@
 #define SERIAL_PORT_ACTIONS_H
 
 #include <QObject>
+#include "j2534_voltage.h"
 #include <QLabel>
 #include "serial_port_actions_direct.h"
 #include <QtRemoteObjects/qremoteobjectnode.h>
@@ -34,6 +35,8 @@ public:
     // QByteArray methods and the QtRO replica contract are unchanged.
     CommunicationResult write_checked(QByteArray output);
     CommunicationResult read_checked(uint16_t timeout);
+    J2534VoltageSample read_vbatt_checked();
+    QUuid voltage_context() const;
 
     bool get_serialPortAvailable();
     bool set_serialPortAvailable(bool value);

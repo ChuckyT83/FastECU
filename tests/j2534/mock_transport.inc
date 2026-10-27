@@ -9,16 +9,20 @@ static unsigned long mockWriteCount = 1, mockCalls[6] = {}, mockLastTimeout = 0;
 static unsigned long mockLastSize = 0, mockLastFlags = 0, mockLastChannel = 0;
 static std::vector<MockReadResult> mockReads;
 static unsigned mockReadIndex = 0;
+static unsigned long mockBatteryValue=0;
+static bool mockBatteryOutput=false;
 static unsigned long mockFiveSize = 2;
 static int mockFivePointer = 0;
 static unsigned long mockDelay = 0, mockLastPin = 0, mockLastVoltage = 0, mockFirstVoltage = 0;
 static unsigned char mockPayload[PASSTHRU_MSG_DATA_SIZE] = {};
 EXPORT void PT_CALL MockTransportReset() {
+    mockBatteryValue=0; mockBatteryOutput=false;
     mockWriteStatus = mockPeriodicStatus = mockStopStatus = mockIoctlStatus = 0;
     mockWriteCount = 1; std::fill(mockCalls, mockCalls + 6, 0);
     mockLastTimeout = mockLastSize = mockLastFlags = mockLastChannel = 0;
     mockReads.clear(); mockReadIndex = 0; mockDelay = 0; mockLastPin = mockLastVoltage = mockFirstVoltage = 0; mockFiveSize = 2; mockFivePointer = 0;
 }
+EXPORT void PT_CALL MockTransportBattery(unsigned long value, int output) { mockBatteryValue=value; mockBatteryOutput=output!=0; }
 EXPORT void PT_CALL MockTransportDelay(unsigned long ms) { mockDelay = ms; }
 EXPORT unsigned long PT_CALL MockTransportByte(int i) { return i>=0 && i<PASSTHRU_MSG_DATA_SIZE ? mockPayload[i] : 0; }
 EXPORT void PT_CALL MockTransportWrite(long status, unsigned long count) { mockWriteStatus = status; mockWriteCount = count; }
@@ -64,6 +68,7 @@ static long mockPeriodic(unsigned long channel, unsigned long *id) { ++mockCalls
 static long mockStop(unsigned long channel) { ++mockCalls[3]; mockLastChannel = channel; return mockStopStatus; }
 static long mockIoctl(unsigned long channel, unsigned long op, void *out) {
     ++mockCalls[4]; mockLastChannel = channel;
+    if (op == READ_VBATT && out && !mockIoctlStatus && mockBatteryOutput) *static_cast<unsigned long*>(out)=mockBatteryValue;
     if (op == FIVE_BAUD_INIT && out && !mockIoctlStatus) {
         auto *bytes = static_cast<SBYTE_ARRAY *>(out);
         const auto capacity = bytes->NumOfBytes;

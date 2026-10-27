@@ -48,6 +48,9 @@ private slots:
         QCOMPARE(int(read.state),int(CommunicationResult::State::Unsupported));
         QVERIFY(!write.hasStatus); QVERIFY(!read.hasStatus);
         QVERIFY(write.bytes.isEmpty()); QVERIFY(read.bytes.isEmpty());
+        const auto voltage=facade.read_vbatt_checked();
+        QCOMPARE(int(voltage.state),int(J2534VoltageSample::State::Unsupported));
+        QVERIFY(!voltage.hasStatus);QVERIFY(facade.voltage_context().isNull());
         QVERIFY(!facade.get_is_tx_done()); // unknown remote completion is never true
         // No slot_sync/default QVariant conversion is involved in either call.
     }

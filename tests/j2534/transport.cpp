@@ -10,6 +10,7 @@
 #define PT_CALL
 extern "C" {
 void MockTransportReset();
+void MockTransportBattery(unsigned long,int);
 void MockTransportDelay(unsigned long);
 unsigned long MockTransportByte(int);
 void MockTransportWrite(long, unsigned long);
@@ -35,7 +36,7 @@ class J2534TransportTest : public QObject {
     Write tx = nullptr;
     Read rx = nullptr;
     Other other = nullptr;
-    Five five = nullptr;
+    Five five = nullptr, battery = nullptr;
     Value value = nullptr;
     std::unique_ptr<SerialPortActionsDirect> port;
     QByteArray message = QByteArray::fromHex("000007e001020304");
@@ -44,6 +45,7 @@ private slots:
 #ifdef Q_OS_WIN
         library.setFileName(QDir::current().absoluteFilePath("mock-j2534.dll"));
         QVERIFY2(library.load(),qPrintable(library.errorString()));
+        battery=reinterpret_cast<Five>(library.resolve("MockTransportBattery"));
         reset = reinterpret_cast<Reset>(library.resolve("MockTransportReset"));
         tx = reinterpret_cast<Write>(library.resolve("MockTransportWrite"));
         rx = reinterpret_cast<Read>(library.resolve("MockTransportRead"));
@@ -53,10 +55,12 @@ private slots:
         delayRead = reinterpret_cast<Delay>(library.resolve("MockTransportDelay"));
         payloadByte = reinterpret_cast<Value>(library.resolve("MockTransportByte"));
 #else
+        battery=MockTransportBattery;
         reset = MockTransportReset; tx = MockTransportWrite; rx = MockTransportRead;
         other = MockTransportOther; five = MockTransportFive; value = MockTransportValue;
         delayRead = MockTransportDelay; payloadByte = MockTransportByte;
 #endif
+        QVERIFY(battery);
         QVERIFY(reset && tx && rx && other && five && value && delayRead && payloadByte);
     }
     void init() {
@@ -76,6 +80,49 @@ private slots:
         reset();
     }
     void cleanup() { port.reset(); }
+    void checkedVoltage_data() {
+        QTest::addColumn<long>("status");QTest::addColumn<ulong>("millivolts");QTest::addColumn<bool>("output");QTest::addColumn<int>("expected");
+        using S=J2534VoltageSample::State;
+        QTest::newRow("observation-only")<<0L<<12345UL<<true<<int(S::Observed);
+        QTest::newRow("zero-retained-not-authorized")<<0L<<0UL<<true<<int(S::Observed);
+        QTest::newRow("unsupported")<<long(ERR_NOT_SUPPORTED)<<0UL<<false<<int(S::Unsupported);
+        QTest::newRow("driver-error")<<long(ERR_FAILED)<<0UL<<false<<int(S::DriverError);
+        QTest::newRow("device-lost")<<long(ERR_DEVICE_NOT_CONNECTED)<<0UL<<false<<int(S::Disconnected);
+        QTest::newRow("missing-output")<<0L<<0UL<<false<<int(S::InvalidValue);
+        QTest::newRow("sentinel")<<0L<<0xffffffffUL<<true<<int(S::InvalidValue);
+    }
+    void checkedVoltage() {
+        QFETCH(long,status);QFETCH(ulong,millivolts);QFETCH(bool,output);QFETCH(int,expected);
+        other(0,0,status);battery(millivolts,output);
+        const auto context=port->voltage_context();const auto sample=port->read_vbatt_checked();
+        QCOMPARE(int(sample.state),expected);QVERIFY(sample.hasStatus);QCOMPARE(sample.status,status);
+        QCOMPARE(value(9),41UL);QCOMPARE(value(4),1UL); // device, not channel99
+        QVERIFY(!sample.programmingAllowed());QCOMPARE(sample.context,context);
+        if(sample.state==J2534VoltageSample::State::Disconnected) {QVERIFY(!port->J2534_open_ok);QVERIFY(!port->J2534_connect_ok);QVERIFY(port->voltage_context().isNull());}
+        using A=J2534VoltageSample::Assessment;
+        if(sample.state==J2534VoltageSample::State::Observed) {
+            QCOMPARE(sample.millivolts,quint64(millivolts));
+            QCOMPARE(int(sample.assess(sample.returnedAtMs,10000,context,0,20000)),int(A::CurrentUnqualified));
+            QCOMPARE(int(sample.assess(sample.observedAtMs+10001,10000,context,0,20000)),int(A::Stale));
+            QCOMPARE(int(sample.assess(sample.returnedAtMs,10000,context,20001,30000)),int(A::OutsideReviewedRange));
+            QCOMPARE(int(sample.assess(sample.returnedAtMs,10000,QUuid::createUuid(),0,20000)),int(A::WrongContext));
+            port->close_j2534_serial_port();
+            QCOMPARE(int(sample.assess(sample.returnedAtMs,10000,port->voltage_context(),0,20000)),int(A::WrongContext));
+        } else QCOMPARE(int(sample.assess(sample.returnedAtMs,10000,context,0,20000)),int(A::NoValue));
+    }
+    void failedVoltageRefreshRetiresObservation() {
+        battery(12345,1);const auto first=port->read_vbatt_checked();
+        QCOMPARE(int(first.state),int(J2534VoltageSample::State::Observed));
+        other(0,0,ERR_FAILED);const auto failed=port->read_vbatt_checked();
+        QCOMPARE(int(failed.state),int(J2534VoltageSample::State::DriverError));
+        QCOMPARE(int(first.assess(J2534VoltageSample::monotonicMs(),10000,port->voltage_context(),0,20000)),int(J2534VoltageSample::Assessment::WrongContext));
+    }
+    void disconnectedVoltageDoesNotCallDriver() {
+        port->close_j2534_serial_port();reset();port->use_openport2_adapter=true;
+        const auto sample=port->read_vbatt_checked();
+        QCOMPARE(int(sample.state),int(J2534VoltageSample::State::Disconnected));
+        QVERIFY(!sample.hasStatus);QCOMPARE(value(4),0UL);
+    }
     void checkedWrite_data() {
         QTest::addColumn<long>("status"); QTest::addColumn<ulong>("count"); QTest::addColumn<int>("state");
         using S=CommunicationResult::State;

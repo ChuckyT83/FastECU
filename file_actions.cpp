@@ -2558,9 +2558,9 @@ FileActions::EcuCalDefStructure *FileActions::checksum_correction(FileActions::E
         const auto prepared = SubaruSH7058Safety::prepare(ecuCalDef->FullRomData, ecuCalDef->McuType,
             ecuCalDef->use_romraider_definition || ecuCalDef->use_ecuflash_definition,
             configValues->flash_protocol_selected_checksum == "yes");
-        if (!prepared.usable() || prepared.image.size() != ecuCalDef->FullRomData.size()) {
+        if (!SubaruSH7058Safety::preservesInput(prepared, ecuCalDef->FullRomData)) {
             QMessageBox::warning(this, tr("SH7058 ROM validation"),
-                "Programming blocked: SH7058 requires exactly 1,048,576 bytes, a supported memory map, a linked definition and valid checksum configuration. ROM preserved.");
+                "Programming blocked: SH7058 requires an exact 1 MiB image, supported map, linked definition and valid checksum configuration. No checksum correction is applied automatically; any proposed correction requires separate review. Original ROM preserved.");
             return nullptr;
         }
         ecuCalDef->FullRomData = prepared.image;

@@ -22,7 +22,7 @@ QByteArray ChecksumEcuSubaruDensoSH7xxx::calculate_checksum(QByteArray romData, 
     return result.usable() ? result.image : romData;
 }
 
-ChecksumEcuSubaruDensoSH7xxx::Result ChecksumEcuSubaruDensoSH7xxx::evaluate(QByteArray romData, uint32_t checksum_area_start, uint32_t checksum_area_length, int32_t offset)
+ChecksumEcuSubaruDensoSH7xxx::Result ChecksumEcuSubaruDensoSH7xxx::evaluate(QByteArray romData, uint32_t checksum_area_start, uint32_t checksum_area_length, int32_t offset, EndpointPolicy endpoints)
 {
     if (!checksum_area_length || checksum_area_length % 12 ||
         checksum_area_start > uint32_t(romData.size()) ||
@@ -62,7 +62,13 @@ ChecksumEcuSubaruDensoSH7xxx::Result ChecksumEcuSubaruDensoSH7xxx::evaluate(QByt
         }
         const int64_t lo = int64_t(checksum_dword_addr_lo) + offset;
         const int64_t hi = int64_t(checksum_dword_addr_hi) + offset;
-        if (lo < 0 || hi < lo || hi > romData.size() || lo % 4 || hi % 4)
+        // Opt-in SH7058 tables may name the last byte of the final word.
+        // Keep the existing j < hi, j += 4 arithmetic; validate the complete
+        // accessed word, not an invented exclusive-only endpoint restriction.
+        const bool lastByte = endpoints == EndpointPolicy::AlignedOrLastByte && hi % 4 == 3;
+        const int64_t accessedEnd = hi + (lastByte ? 1 : 0);
+        if (lo < 0 || hi < lo || hi > romData.size() || lo % 4 ||
+            (hi % 4 && !lastByte) || accessedEnd > romData.size())
             return {State::Invalid, {}};
         uint32_t checksum_dword_addr_lo_with_offset = uint32_t(lo);
         uint32_t checksum_dword_addr_hi_with_offset = uint32_t(hi);

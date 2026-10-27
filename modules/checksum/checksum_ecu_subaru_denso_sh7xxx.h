@@ -16,8 +16,10 @@ public:
         QByteArray image;
         bool usable() const { return state == State::Disabled || state == State::Valid || state == State::Corrected; }
     };
+    enum class EndpointPolicy { AlignedExclusive, AlignedOrLastByte };
     // No dialogs; invalid configuration never returns a usable image.
-    static Result evaluate(QByteArray romData, uint32_t start, uint32_t length, int32_t offset = 0);
+    static Result evaluate(QByteArray romData, uint32_t start, uint32_t length, int32_t offset = 0,
+                           EndpointPolicy endpoints = EndpointPolicy::AlignedExclusive);
 
     //Note that offset is added to all addresses
     static QByteArray calculate_checksum(QByteArray romData, uint32_t checksum_area_start, uint32_t checksum_area_length, int32_t offset = 0);

@@ -79,14 +79,23 @@ CommunicationResult::State FlashEcuSubaruDensoSH7058Can::validate_response(const
         if (request.size() < 9 || response.size() < 9 || response.mid(4,2) != request.mid(4,2)) return CommState::Malformed;
         const unsigned declared = (uint8_t(response.at(6)) << 8) | uint8_t(response.at(7));
         const uint8_t command = uint8_t(request.at(8));
-        if (declared != unsigned(response.size()-8) || uint8_t(response.at(8)) != (command | 0x40)) return CommState::Malformed;
+        if (declared != unsigned(response.size()-8)) return CommState::Malformed;
+        // Exact kernel negatives are 7F/command/status, or 7F/command/BE32
+        // observed CRC for validate/commit. These are not OEM diagnostic NRCs.
+        if (uint8_t(response.at(8)) == 0x7f) {
+            if (response.size() < 11 || uint8_t(response.at(9)) != command) return CommState::Malformed;
+            return response.size() == 11 ||
+                ((command == SUB_KERNEL_VALIDATE_FLASH_BUFFER || command == SUB_KERNEL_COMMIT_FLASH_BUFFER) && response.size() == 14)
+                ? CommState::Rejected : CommState::Malformed;
+        }
+        if (uint8_t(response.at(8)) != (command | 0x40)) return CommState::Malformed;
         const int payload = response.size()-9;
         switch (command) {
         case SUB_KERNEL_ID: return payload > 0 ? CommState::Success : CommState::Malformed;
         case SUB_KERNEL_CRC:
         case SUB_KERNEL_GET_MAX_MSG_SIZE:
         case SUB_KERNEL_GET_MAX_BLK_SIZE: return payload == 4 ? CommState::Success : CommState::Malformed;
-        case SUB_KERNEL_PROG_VOLT: return payload == 2 ? CommState::Success : CommState::Malformed;
+        case SUB_KERNEL_PROG_VOLT: return payload == 4 ? CommState::Success : CommState::Malformed;
         case SUB_KERNEL_READ_AREA:
             if (request.size() != 15) return CommState::Malformed;
             return payload == ((uint8_t(request.at(13)) << 8) | uint8_t(request.at(14))) ? CommState::Success : CommState::Malformed;
@@ -131,17 +140,36 @@ QByteArray FlashEcuSubaruDensoSH7058Can::receive_response(uint16_t timeout, bool
         communication = CommunicationResult::failure(CommState::Cancelled, "Operation cancelled before reception");
         return {};
     }
+    QElapsedTimer responseClock;
+    responseClock.start();
     communication = serial->read_checked(timeout);
     if (kill_process) {
         communication.state = CommState::Cancelled;
         return {};
+    }
+    if (communication.ok() && timeout && responseClock.elapsed() >= timeout) {
+        // Match the candidate's host acceptance deadline without changing the
+        // driver timeout. Retain raw reply/status; never treat a late success as
+        // an acknowledgement, even on an optional queue-drain path.
+        communication.state = CommState::Malformed;
+        communication.detail = "Reply returned past host deadline; transaction ownership uncertain, no retry";
     }
     if (communication.ok()) {
         communication.state = drain ? CommState::Malformed : validate_response(outstandingRequest, communication.bytes);
         if (!communication.ok()) communication.detail = communication.state == CommState::Unsupported ?
             "Unsupported or pending ECU response; no waiting/retry strategy implemented" : "Malformed, unrelated or rejected ECU response";
     }
-    if (communication.state == CommState::Success || communication.state == CommState::Rejected) return communication.bytes;
+    if (communication.state == CommState::Rejected) {
+        if (outstandingRequest.mid(4,2) == QByteArray::fromHex("beef")) {
+            const auto &bytes=communication.bytes; // lengths established by validate_response
+            communication.detail=bytes.size()==14 ?
+                QString("Kernel rejected command 0x%1: observed CRC 0x%2").arg(uint8_t(bytes.at(9)),2,16,QChar('0')).arg(responseWord(bytes,10),8,16,QChar('0')) :
+                QString("Kernel rejected command 0x%1: status 0x%2").arg(uint8_t(bytes.at(9)),2,16,QChar('0')).arg(uint8_t(bytes.at(10)),2,16,QChar('0'));
+            emit LOG_E(communication.detail,true,true);
+        }
+        return communication.bytes;
+    }
+    if (communication.state == CommState::Success) return communication.bytes;
     if (communication.state == CommState::Timeout)
         emit LOG_D(QString("No ECU response within %1 ms").arg(timeout), true, true);
     else emit LOG_E(communication.detail + (communication.hasStatus ? QString(" (J2534 status 0x%1)").arg(communication.status,0,16) : QString()), true, true);
@@ -1014,6 +1042,9 @@ int FlashEcuSubaruDensoSH7058Can::write_mem(bool test_write)
     if (kill_process) return STATUS_CANCELLED;
     if (!valid_image() || ecuCalDef->Sh7058PreparedImageHash.isEmpty() ||
         ecuCalDef->Sh7058PreparedImageHash != SubaruSH7058Safety::fingerprint(ecuCalDef->FullRomData)) return STATUS_ERROR;
+    if (!SubaruSH7058Safety::validProgrammingMap(&flashdevices[mcu_type_index])) return STATUS_ERROR;
+    if (this->test_write != test_write) flash_write_init = false;
+    this->test_write = test_write;
     QByteArray filedata;
 
     filedata = ecuCalDef->FullRomData;
@@ -1112,7 +1143,7 @@ int FlashEcuSubaruDensoSH7058Can::write_mem(bool test_write)
             }
         }
         else
-            emit LOG_I("*** Test write PASS, it's ok to perform actual write! ***", true, true);
+            emit LOG_I("*** Protected buffer validation completed; this does not qualify an actual flash. ***", true, true);
     }
     else
     {
@@ -1375,6 +1406,13 @@ int FlashEcuSubaruDensoSH7058Can::init_flash_write()
     msg.append(QString(": 0x%1").arg(flashblocksize,4,16,QLatin1Char('0')).toUtf8());
     emit LOG_I(msg, false, true);
 
+    // The exact pinned kernel has a 512-byte transfer and 4096-byte buffer.
+    // Do not enable/erase with a different or malformed capability response.
+    if (flashmessagesize != 0x200 || flashblocksize != 0x1000) {
+        communication.state = CommState::Unsupported; // retain capability bytes and actual driver status
+        communication.detail = "Unqualified SH7058 kernel transfer/buffer capabilities";
+        return STATUS_ERROR;
+    }
     uint8_t SUB_KERNEL_CMD = 0;
     if (test_write)
     {
@@ -1436,7 +1474,7 @@ int FlashEcuSubaruDensoSH7058Can::init_flash_write()
 int FlashEcuSubaruDensoSH7058Can::reflash_block(const uint8_t *newdata, const struct flashdev_t *fdt, unsigned blockno, bool test_write)
 {
     if (kill_process) return STATUS_CANCELLED;
-    if (!valid_image() || !newdata || !SubaruSH7058Safety::validMap(fdt) || blockno >= fdt->numblocks) return STATUS_ERROR;
+    if (!valid_image() || !newdata || !SubaruSH7058Safety::validProgrammingMap(fdt) || blockno >= fdt->numblocks) return STATUS_ERROR;
     uint32_t block_start;
     uint32_t block_len;
     uint32_t datalen = 0;
@@ -1445,6 +1483,8 @@ int FlashEcuSubaruDensoSH7058Can::reflash_block(const uint8_t *newdata, const st
     QByteArray received;
     QByteArray msg;
 
+    if (this->test_write != test_write) flash_write_init = false;
+    this->test_write = test_write;
     if (!flash_write_init)
         if ((result = init_flash_write()) != STATUS_SUCCESS)
             return result;
@@ -1463,7 +1503,7 @@ int FlashEcuSubaruDensoSH7058Can::reflash_block(const uint8_t *newdata, const st
     msg = QString("Flash block addr: 0x" + start_addr + " len: 0x" + length).toUtf8();
     emit LOG_I(msg, true, true);
 
-    emit LOG_I("Check flash voltage", true, false);
+    emit LOG_I("Kernel voltage fields (fixed constants, not a supply measurement)", true, false);
     datalen = 0;
     output.clear();
     output.append('\0');
@@ -1501,10 +1541,10 @@ int FlashEcuSubaruDensoSH7058Can::reflash_block(const uint8_t *newdata, const st
     }
 
     float prog_voltage = (((uint8_t)received.at(9) << 8) + (uint8_t)received.at(10)) / 50.0;
-    emit LOG_I(": " + QString::number(prog_voltage) + "V", false, true);
+    emit LOG_I(": " + QString::number(prog_voltage) + "V reported; not voltage preflight or programming authorization", false, true);
 
     if ((result = flash_block(newdata, block_start, block_len)) != STATUS_SUCCESS) {
-        emit LOG_E("Reflash error! Do not panic, do not reset the ECU immediately. The kernel is most likely still running and receiving commands!", true, true);
+        emit LOG_E("Reflash failed: ECU/flash state is uncertain. No automatic retry or reset; use a separately validated recovery procedure.", true, true);
         return result;
     }
 
@@ -1675,64 +1715,69 @@ int FlashEcuSubaruDensoSH7058Can::flash_block(const uint8_t *src, uint32_t start
             imgcrc32 = crc32(&src[flashblockstart], flashblocksize);
             emit LOG_D("Image CRC32: 0x" + QString::number(imgcrc32, 16), true, true);
 
-            uint8_t SUB_KERNEL_CMD = 0;
-            if (test_write)
-            {
-                SUB_KERNEL_CMD = (uint8_t)(SUB_KERNEL_VALIDATE_FLASH_BUFFER & 0xFF);
-                emit LOG_I("Validate flash addr: 0x" + QString::number(flashblockstart, 16), true, false);
-                emit LOG_I(" len: 0x" + QString::number(flashblocksize, 16), false, false);
-                emit LOG_I(" crc32: 0x" + QString::number(imgcrc32, 16), false, true);
-            }
-            else if (!test_write)
-            {
-                SUB_KERNEL_CMD = (uint8_t)(SUB_KERNEL_COMMIT_FLASH_BUFFER & 0xFF);
-                emit LOG_I("Committ flash addr: 0x" + QString::number(flashblockstart, 16), true, false);
-                emit LOG_I(" len: 0x" + QString::number(flashblocksize, 16), false, false);
-                emit LOG_I(" crc32: 0x" + QString::number(imgcrc32, 16), false, true);
-            }
-
-            datalen = 10;
-            output.clear();
-            output.append('\0');
-            output.append('\0');
-            output.append((uint8_t)0x07);
-            output.append((uint8_t)0xE0);
-            output.append((uint8_t)((SUB_KERNEL_START_COMM >> 8) & 0xFF));
-            output.append((uint8_t)(SUB_KERNEL_START_COMM & 0xFF));
-            output.append((uint8_t)((datalen + 1) >> 8) & 0xFF);
-            output.append((uint8_t)(datalen + 1) & 0xFF);
-            output.append((uint8_t)(SUB_KERNEL_CMD & 0xFF));
-            output.append((uint8_t)(flashblockstart >> 24) & 0xFF);
-            output.append((uint8_t)(flashblockstart >> 16) & 0xFF);
-            output.append((uint8_t)(flashblockstart >> 8) & 0xFF);
-            output.append((uint8_t)flashblockstart & 0xFF);
-            output.append((uint8_t)(flashblocksize >> 8) & 0xFF);
-            output.append((uint8_t)flashblocksize & 0xFF);
-            output.append((uint8_t)(imgcrc32 >> 24) & 0xFF);
-            output.append((uint8_t)(imgcrc32 >> 16) & 0xFF);
-            output.append((uint8_t)(imgcrc32 >> 8) & 0xFF);
-            output.append((uint8_t)imgcrc32 & 0xFF);
-            if (kill_process) return STATUS_CANCELLED;
-            if (!submit(output)) return communication_status();
-            
-            //delay(200);
-            received = receive_response(serial_read_extra_long_timeout);
-            if (communication_failed()) return communication_status();
-            
-            if (received.length() > 7)
-            {
-                if ((uint8_t)received.at(4) != ((SUB_KERNEL_START_COMM >> 8) & 0xFF) || (uint8_t)received.at(5) != (SUB_KERNEL_START_COMM & 0xFF) || (uint8_t)received.at(8) != (SUB_KERNEL_CMD + 0x40))
+            // 24 programs before comparing flash CRC. First use 23 to validate
+            // the complete RAM buffer, so corrupt transfer data is not committed.
+            // Test-write stays protected and never submits 24.
+            for (int pass=0; pass<(test_write ? 1 : 2); ++pass) {
+                uint8_t SUB_KERNEL_CMD = 0;
+                if (pass == 0)
                 {
-                    emit LOG_E("Wrong response from ECU: " + FileActions::parse_nrc_message(received.mid(8, received.length()-1)), true, true);
+                    SUB_KERNEL_CMD = (uint8_t)(SUB_KERNEL_VALIDATE_FLASH_BUFFER & 0xFF);
+                    emit LOG_I("Validate flash addr: 0x" + QString::number(flashblockstart, 16), true, false);
+                    emit LOG_I(" len: 0x" + QString::number(flashblocksize, 16), false, false);
+                    emit LOG_I(" crc32: 0x" + QString::number(imgcrc32, 16), false, true);
+                }
+                else
+                {
+                    SUB_KERNEL_CMD = (uint8_t)(SUB_KERNEL_COMMIT_FLASH_BUFFER & 0xFF);
+                    emit LOG_I("Committ flash addr: 0x" + QString::number(flashblockstart, 16), true, false);
+                    emit LOG_I(" len: 0x" + QString::number(flashblocksize, 16), false, false);
+                    emit LOG_I(" crc32: 0x" + QString::number(imgcrc32, 16), false, true);
+                }
+
+                datalen = 10;
+                output.clear();
+                output.append('\0');
+                output.append('\0');
+                output.append((uint8_t)0x07);
+                output.append((uint8_t)0xE0);
+                output.append((uint8_t)((SUB_KERNEL_START_COMM >> 8) & 0xFF));
+                output.append((uint8_t)(SUB_KERNEL_START_COMM & 0xFF));
+                output.append((uint8_t)((datalen + 1) >> 8) & 0xFF);
+                output.append((uint8_t)(datalen + 1) & 0xFF);
+                output.append((uint8_t)(SUB_KERNEL_CMD & 0xFF));
+                output.append((uint8_t)(flashblockstart >> 24) & 0xFF);
+                output.append((uint8_t)(flashblockstart >> 16) & 0xFF);
+                output.append((uint8_t)(flashblockstart >> 8) & 0xFF);
+                output.append((uint8_t)flashblockstart & 0xFF);
+                output.append((uint8_t)(flashblocksize >> 8) & 0xFF);
+                output.append((uint8_t)flashblocksize & 0xFF);
+                output.append((uint8_t)(imgcrc32 >> 24) & 0xFF);
+                output.append((uint8_t)(imgcrc32 >> 16) & 0xFF);
+                output.append((uint8_t)(imgcrc32 >> 8) & 0xFF);
+                output.append((uint8_t)imgcrc32 & 0xFF);
+                if (kill_process) return STATUS_CANCELLED;
+                if (!submit(output)) return communication_status();
+            
+                //delay(200);
+                received = receive_response(serial_read_extra_long_timeout);
+                if (communication_failed()) return communication_status();
+            
+                if (received.length() > 7)
+                {
+                    if ((uint8_t)received.at(4) != ((SUB_KERNEL_START_COMM >> 8) & 0xFF) || (uint8_t)received.at(5) != (SUB_KERNEL_START_COMM & 0xFF) || (uint8_t)received.at(8) != (SUB_KERNEL_CMD + 0x40))
+                    {
+                        emit LOG_E("Wrong response from ECU: " + FileActions::parse_nrc_message(received.mid(8, received.length()-1)), true, true);
                     
+                        return STATUS_ERROR;
+                    }
+                }
+                else
+                {
+                    emit LOG_E("No valid response from ECU", true, true);
+                
                     return STATUS_ERROR;
                 }
-            }
-            else
-            {
-                emit LOG_E("No valid response from ECU", true, true);
-                
-                return STATUS_ERROR;
             }
             flashblockstart += flashblocksize;
         }

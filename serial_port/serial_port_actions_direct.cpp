@@ -596,6 +596,7 @@ void SerialPortActionsDirect::close_serial_port()
 
 void SerialPortActionsDirect::close_j2534_serial_port()
 {
+    voltageContext_ = QUuid::createUuid(); // retire observations even when cleanup fails
     // Resource ownership is independent of whether initialization completed.
     // Close each acquired resource once, in reverse order, even after an error.
     if (J2534_connect_ok)
@@ -1124,6 +1125,33 @@ int SerialPortActionsDirect::set_j2534_ioctl(unsigned long parameter, int value)
     SCONFIG_LIST list = {1, &config};
     const long status = PassThruIoctl(chanID, SET_CONFIG, &list, NULL);
     return status == STATUS_NOERROR ? STATUS_SUCCESS : transport_failure(status, "SET_CONFIG");
+}
+
+J2534VoltageSample SerialPortActionsDirect::read_vbatt_checked()
+{
+    using State=J2534VoltageSample::State;
+    J2534VoltageSample sample;
+    if (!use_openport2_adapter) { voltageContext_=QUuid::createUuid(); sample.state=State::Unsupported; return sample; }
+    if (!J2534_open_ok) { voltageContext_=QUuid::createUuid(); sample.state=State::Disconnected; return sample; }
+    sample.context=voltageContext_;
+    sample.deviceId=devID; // READ_VBATT is a device-level IOCTL, not chanID
+    sample.observedAtMs=J2534VoltageSample::monotonicMs();
+    unsigned long value=0xffffffffUL; // detect success without an output value
+    sample.status=PassThruIoctl(devID,READ_VBATT,nullptr,&value);
+    sample.hasStatus=true;
+    sample.returnedAtMs=J2534VoltageSample::monotonicMs();
+    sample.millivolts=value;
+    if (sample.status==ERR_NOT_SUPPORTED) sample.state=State::Unsupported;
+    else if (sample.status==ERR_INVALID_DEVICE_ID || sample.status==ERR_DEVICE_NOT_CONNECTED) {
+        sample.state=State::Disconnected;
+        transport_failure(sample.status,"READ_VBATT (device lost)"); // retire stale device/channel state
+    }
+    else if (sample.status!=STATUS_NOERROR) sample.state=State::DriverError;
+    else if (value>=0xffffffffUL) sample.state=State::InvalidValue;
+    else sample.state=State::Observed;
+    if (sample.state!=State::Observed) voltageContext_=QUuid::createUuid(); // invalidate older observations on any failed refresh
+    sample.detail="Driver-reported millivolts; physical accuracy and sensor freshness unqualified. Not programming authorization.";
+    return sample;
 }
 
 unsigned long SerialPortActionsDirect::read_vbatt()

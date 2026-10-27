@@ -2,6 +2,7 @@
 #define SERIAL_PORT_ACTIONS_DIRECT_H
 
 #include "communication_result.h"
+#include "j2534_voltage.h"
 #include "j2534_trace.h"
 #include <QCoreApplication>
 #include <QByteArray>
@@ -149,6 +150,8 @@ public:
     QString open_serial_port();
 
     unsigned long read_vbatt();
+    J2534VoltageSample read_vbatt_checked();
+    QUuid voltage_context() const { return J2534_open_ok ? voltageContext_ : QUuid(); }
     int set_j2534_ioctl(unsigned long parameter, int value);
 
     bool get_is_tx_done();
@@ -164,6 +167,7 @@ public:
     long transport_status() const { return transportStatus; }
 
 private:
+    QUuid voltageContext_ = QUuid::createUuid();
     J2534Trace trace;
     void trace_api(const char *operation, long status, QJsonObject fields = {});
     long communicationDriverStatus = 0;

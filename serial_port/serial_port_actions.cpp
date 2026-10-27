@@ -1208,3 +1208,16 @@ CommunicationResult SerialPortActions::read_checked(uint16_t timeout)
     set_comm_busy(false);
     return result;
 }
+
+J2534VoltageSample SerialPortActions::read_vbatt_checked()
+{
+    if (isDirectConnection()) return serial_direct->read_vbatt_checked();
+    J2534VoltageSample sample;
+    sample.state=J2534VoltageSample::State::Unsupported;
+    sample.detail="Remote voltage has no explicit measurement/freshness contract";
+    return sample;
+}
+QUuid SerialPortActions::voltage_context() const
+{
+    return peerAddress.isEmpty() ? serial_direct->voltage_context() : QUuid();
+}

@@ -17,20 +17,22 @@ DEFINES += QT_DEPRECATED_WARNINGS #QT_SSL
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 win32 {
-    #LIBS += -LC:\Qt\5.9.9\mingw53_32\lib\libQt5OpenGL.a -lopengl32 -lsetupapi
-    #OpenSSL library must be stated first because in case
-    #of static build it cannot be linked static, dynamic only
-    QMAKE_LFLAGS += -L\"C:\Program Files (x86)\OpenSSL-Win32\bin\" \
-                    -L\"C:\Program Files\OpenSSL-Win32\bin\" \
-                    -lcrypto-3
-    LIBS += -lopengl32 -lsetupapi
+    # Explicit matching-architecture OpenSSL prefix; do not link Win32 crypto
+    # into an x64 build or place crypto before objects in QMAKE_LFLAGS.
+    isEmpty(OPENSSL_PREFIX): OPENSSL_PREFIX = $$(FASTECU_OPENSSL_ROOT)
+    isEmpty(OPENSSL_PREFIX): error("Set OPENSSL_PREFIX or FASTECU_OPENSSL_ROOT to a matching-architecture OpenSSL installation")
+    !exists($$OPENSSL_PREFIX/include/openssl/evp.h): error("OpenSSL headers not found under OPENSSL_PREFIX")
+    INCLUDEPATH += $$quote($$OPENSSL_PREFIX/include)
+    LIBS += -L$$quote($$OPENSSL_PREFIX/lib)
+    win32-g++: LIBS += -lcrypto
+    win32-msvc: LIBS += libcrypto.lib
+    LIBS += -lopengl32 -lsetupapi -lws2_32 -lcrypt32 -lbcrypt
     SOURCES += \
     serial_port/J2534_win.cpp
     HEADERS += \
     serial_port/J2534_win.h
     HEADERS += \
     serial_port/J2534_tactrix_win.h
-    INCLUDEPATH += "C:\Program Files (x86)\OpenSSL-Win32\include" "C:\Program Files\OpenSSL-Win32\include"
 }
 unix {
     LIBS += -lcrypto
@@ -144,6 +146,7 @@ SOURCES += \
 
 HEADERS += \
     serial_port/j2534_trace.h \
+    serial_port/j2534_voltage.h \
     serial_port/j2534_trace_calls.inc \
     serial_port/j2534_trace_message.h \
     modules/ecu/subaru_sh7058_kernel_layout.h \

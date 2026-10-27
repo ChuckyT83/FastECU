@@ -7,6 +7,7 @@
 #include "flash_ecu_subaru_denso_sh7058_can.h"
 #include "subaru_sh7058_safety.h"
 #include "candidate_uploader.h"
+#include "flash_kernel_model.h"
 
 // Diagnostic formatting is the only FileActions symbol needed by the module.
 // Its text is irrelevant to state/command assertions; the application links the
@@ -30,7 +31,7 @@ static QByteArray image() {
 static QByteArray ack(int command, uint32_t value = 0) {
     int payload=0;
     if(command==SUB_KERNEL_CRC || command==SUB_KERNEL_GET_MAX_MSG_SIZE || command==SUB_KERNEL_GET_MAX_BLK_SIZE || command==SUB_KERNEL_ID) payload=4;
-    if(command==SUB_KERNEL_PROG_VOLT) payload=2;
+    if(command==SUB_KERNEL_PROG_VOLT) payload=4;
     QByteArray a(13, '\0');
     a[2] = '\7'; a[3] = char(0xE8);
     a[4] = char(SUB_KERNEL_START_COMM >> 8); a[5] = char(SUB_KERNEL_START_COMM);
@@ -67,9 +68,9 @@ class SubaruSafetyTest : public QObject {
                     (request >= 16 && request - 16 < postMismatches)) crc ^= 1;
                 return ack(cmd,crc);
             }
-            if (cmd == SUB_KERNEL_GET_MAX_MSG_SIZE) return ack(cmd, 0x1000);
+            if (cmd == SUB_KERNEL_GET_MAX_MSG_SIZE) return ack(cmd, 0x200);
             if (cmd == SUB_KERNEL_GET_MAX_BLK_SIZE) return ack(cmd, 0x1000);
-            if (cmd == SUB_KERNEL_PROG_VOLT) return ack(cmd, 0x02580000);
+            if (cmd == SUB_KERNEL_PROG_VOLT) return ack(cmd, 0x02300230);
             return ack(cmd);
         };
     }
@@ -128,6 +129,110 @@ private slots:
         QCOMPARE(outcome.contains("was succesful"),mismatches==0 && !failure);
         if(mismatches) QVERIFY(outcome.contains("Verification failed"));
         if(failure) QVERIFY(outcome.contains("operation failed"));
+    }
+    void statefulFlashWorkflow_data() {
+        QTest::addColumn<bool>("protectedOnly");QTest::newRow("real-commit-path")<<false;QTest::newRow("protected-validate-path")<<true;
+    }
+    void statefulFlashWorkflow() {
+        QFETCH(bool,protectedOnly);const auto original=cal.FullRomData;
+        FlashKernelModel kernel(original);const auto before=kernel.flash;
+        port.respond=[&](const QByteArray &a){return kernel.respond(a);};
+        QCOMPARE(module->write_mem(protectedOnly),0);
+        QCOMPARE(cal.FullRomData,original);
+        QCOMPARE(kernel.flash,protectedOnly?before:original);
+        QCOMPARE(kernel.transfers,16);QCOMPARE(kernel.validations,2);
+        QCOMPARE(kernel.commits,protectedOnly?0:2);QCOMPARE(kernel.erases,protectedOnly?0:2);
+        QCOMPARE(commands().count(SUB_KERNEL_FLASH_ENABLE),protectedOnly?0:1);
+        QCOMPARE(commands().count(SUB_KERNEL_FLASH_DISABLE),protectedOnly?1:0);
+        for(int i=0;i<port.writes.size();++i) if(uint8_t(port.writes.at(i).at(8))==SUB_KERNEL_COMMIT_FLASH_BUFFER) {
+            QCOMPARE(uint8_t(port.writes.at(i-1).at(8)),uint8_t(SUB_KERNEL_VALIDATE_FLASH_BUFFER));
+            auto prior=port.writes.at(i-1);prior[8]=char(SUB_KERNEL_COMMIT_FLASH_BUFFER);QCOMPARE(prior,port.writes.at(i));
+        }
+    }
+    void cachedWriteModeCannotLeakToTestWrite() {
+        FlashKernelModel kernel(cal.FullRomData);port.respond=[&](const QByteArray &a){return kernel.respond(a);};
+        QCOMPARE(module->write_mem(false),0);QVERIFY(kernel.enabled);QCOMPARE(kernel.erases,2);
+        kernel.flash[0]=char(uint8_t(kernel.flash.at(0))^1);port.writes.clear();
+        QCOMPARE(module->write_mem(true),0);QVERIFY(!kernel.enabled);QCOMPARE(kernel.erases,2);QCOMPARE(kernel.commits,2);
+        QCOMPARE(commands().count(SUB_KERNEL_FLASH_DISABLE),1);QCOMPARE(commands().count(SUB_KERNEL_FLASH_ENABLE),0);
+    }
+    void statefulWholeImageWorkflow() {
+        QByteArray original(1048576,'\0');
+        for(int i=0;i<original.size();++i) original[i]=char((i*17)^(i>>9));
+        put32(original,0xFFB80,0);put32(original,0xFFB84,0);put32(original,0xFFB88,0x5AA5A55A);
+        const auto prepared=SubaruSH7058Safety::prepare(original,"SH7058",true,true);
+        QVERIFY(SubaruSH7058Safety::preservesInput(prepared,original));
+        cal.FullRomData=prepared.image;cal.Sh7058PreparedImageHash=SubaruSH7058Safety::fingerprint(original);
+        FlashKernelModel kernel(original);kernel.flash=original;
+        for(int i=0;i<kernel.flash.size();++i) kernel.flash[i]=char(uint8_t(kernel.flash.at(i))^0x55);
+        port.respond=[&](const QByteArray &a){return kernel.respond(a);};
+        QCOMPARE(module->write_mem(false),0);QCOMPARE(kernel.flash,original);QCOMPARE(cal.FullRomData,original);
+        QCOMPARE(kernel.erases,16);QCOMPARE(kernel.commits,256);QCOMPARE(kernel.validations,256);QCOMPARE(kernel.transfers,2048);
+        uint32_t nextData=0,nextCommit=0;unsigned nextSector=0;
+        for(const auto &a:port.writes) {
+            const auto cmd=uint8_t(a.at(8));
+            if(cmd==SUB_KERNEL_BLANK_PAGE) {QCOMPARE(get32(a,9),fblocks_SH7058[nextSector].start);++nextSector;}
+            if(cmd==SUB_KERNEL_WRITE_FLASH_BUFFER) {
+                QCOMPARE(a.size(),525);QCOMPARE(get32(a,9),nextData);QCOMPARE(a.mid(13),original.mid(int(nextData),512));nextData+=512;
+            }
+            if(cmd==SUB_KERNEL_COMMIT_FLASH_BUFFER) {QCOMPARE(get32(a,9),nextCommit);QCOMPARE(uint8_t(a.at(13)),uint8_t(0x10));QCOMPARE(uint8_t(a.at(14)),uint8_t(0));nextCommit+=4096;}
+        }
+        QCOMPARE(nextData,1048576u);QCOMPARE(nextCommit,1048576u);QCOMPARE(nextSector,16u);
+        // Even an entirely successful simulated write and running kernel cannot
+        // admit a normal production operation. Only the private friend seam ran.
+        const auto submissions=port.writes.size();module->kernel_alive=true;
+        QTimer timer;connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets())if(auto *b=qobject_cast<QMessageBox*>(w))b->accept();});timer.start(1);
+        module->run();QCOMPARE(module->operation_result(),1);QCOMPARE(port.writes.size(),submissions);QCOMPARE(port.setupCalls,0);
+    }
+    void statefulFailures_data() {
+        QTest::addColumn<QString>("fault");
+        for(const char *f:{"capabilities","block-capabilities","short-voltage","erase-error","erase-timeout","buffer-corruption","partial-program","commit-timeout","final-crc","cancel-after-erase","cancel-after-validate"})
+            QTest::newRow(f)<<QString(f);
+    }
+    void statefulFailures() {
+        QFETCH(QString,fault);FlashKernelModel kernel(cal.FullRomData);kernel.fault=fault;
+        port.respond=[&](const QByteArray &a){return kernel.respond(a);};
+        port.afterRead=[&](const QByteArray &a){
+            if((fault=="cancel-after-erase" && uint8_t(a.at(8))==0x25) ||
+               (fault=="cancel-after-validate" && uint8_t(a.at(8))==0x23)) cancel();
+        };
+        const auto original=cal.FullRomData;const int result=module->write_mem(false);
+        QVERIFY(result!=0);QVERIFY(!module->operation_succeeded(result));QCOMPARE(cal.FullRomData,original);
+        if(fault=="capabilities" || fault=="block-capabilities") QCOMPARE(commands().count(SUB_KERNEL_FLASH_ENABLE),0);
+        if(fault=="capabilities" || fault=="block-capabilities" || fault=="short-voltage" || fault=="erase-error" || fault=="erase-timeout" || fault=="cancel-after-erase") QCOMPARE(kernel.transfers,0);
+        if(fault=="buffer-corruption" || fault=="cancel-after-validate") QCOMPARE(kernel.commits,0);
+        if(fault=="partial-program" || fault=="commit-timeout") {QCOMPARE(kernel.commits,1);QCOMPARE(kernel.erases,1);}
+        if(fault=="final-crc") QCOMPARE(result,2);
+        if(fault=="buffer-corruption") {QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Rejected));QCOMPARE(module->communication.bytes.size(),14);QVERIFY(module->communication.detail.contains("observed CRC"));}
+    }
+    void lateKernelReplyCannotEnableFlash() {
+        module->serial_read_medium_timeout=1;
+        port.beforeRead=[] { QTest::qSleep(5); }; // guaranteed late positive, no live timing change
+        QCOMPARE(module->init_flash_write(),1);
+        QCOMPARE(int(module->communication.state),int(CommunicationResult::State::Malformed));
+        QVERIFY(module->communication.hasStatus);QCOMPARE(module->communication.status,0L);
+        QCOMPARE(module->communication.bytes,ack(SUB_KERNEL_GET_MAX_MSG_SIZE,0x200));
+        QCOMPARE(commands(),QVector<int>({SUB_KERNEL_GET_MAX_MSG_SIZE}));
+        QVERIFY(!module->flash_write_init);QVERIFY(module->communication.detail.contains("deadline"));
+    }
+    void aggregateMapCannotErase() {
+        const auto *aggregate=SubaruSH7058Safety::memoryMap("SH7058_1block");QVERIFY(aggregate);
+        QVERIFY(!SubaruSH7058Safety::validProgrammingMap(aggregate));QVERIFY(!SubaruSH7058Safety::validSector(aggregate,0,1048576));
+        QVERIFY(!SubaruSH7058Safety::validSector(SubaruSH7058Safety::memoryMap("SH7058"),0,8192));
+        while(QString::fromLatin1(flashdevices[module->mcu_type_index].name)!="SH7058_1block")++module->mcu_type_index;
+        QCOMPARE(module->write_mem(false),1);QVERIFY(port.writes.isEmpty());
+    }
+    void checksumCorrectionRequiresReview() {
+        const auto original=image();const auto disabled=SubaruSH7058Safety::prepare(original,"SH7058",true,true);
+        QVERIFY(SubaruSH7058Safety::preservesInput(disabled,original));
+        auto wrong=original;put32(wrong,0xFFB88,0);
+        const auto corrected=SubaruSH7058Safety::prepare(wrong,"SH7058",true,true);
+        QCOMPARE(int(corrected.state),int(C::State::Corrected));QVERIFY(corrected.image!=wrong);
+        QVERIFY(!SubaruSH7058Safety::preservesInput(corrected,wrong));
+        const auto valid=C::evaluate(corrected.image,0xFFB80,17*12);
+        QVERIFY(SubaruSH7058Safety::preservesInput(valid,corrected.image));
+        QVERIFY(!SubaruSH7058Safety::preservesInput({C::State::Invalid,{}},wrong));
+        QCOMPARE(original,image()); // no input mutation by evaluation/admission
     }
     void noChanges() {
         initialDifference=false;
@@ -289,6 +394,32 @@ private slots:
         // programming uses the typed result and blocks instead of accepting it.
         QCOMPARE(C::calculate_checksum(before,0xFFB80,0),before);
     }
+    void checksumEndpointPolicy_data() {
+        QTest::addColumn<int>("size");QTest::addColumn<uint>("end");QTest::addColumn<bool>("valid");
+        QTest::newRow("exclusive")<<64<<12u<<true;
+        QTest::newRow("last-byte")<<64<<11u<<true;
+        QTest::newRow("final-word-at-boundary")<<64<<63u<<true;
+        QTest::newRow("final-word-crosses-buffer")<<63<<63u<<false;
+        QTest::newRow("unsupported-partial-word-bound")<<64<<9u<<false;
+    }
+    void checksumEndpointPolicy() {
+        QFETCH(int,size);QFETCH(uint,end);QFETCH(bool,valid);
+        // A single descriptor at offset0 and one covered word at offset8.
+        QByteArray bytes(qMax(size,12),'\0');put32(bytes,0,end>12?60:8);put32(bytes,4,end);
+        // Descriptor checksum shares the covered word: use an empty/zero sum
+        // only for bounds classification here, then arithmetic below separately.
+        put32(bytes,8,0);bytes.resize(size);const auto original=bytes;
+        const auto result=C::evaluate(bytes,0,12,0,C::EndpointPolicy::AlignedOrLastByte);
+        QCOMPARE(result.usable(),valid);QCOMPARE(bytes,original);
+        if(end%4==3 && size>=12) QCOMPARE(int(C::evaluate(bytes,0,12).state),int(C::State::Invalid)); // unrelated default unchanged
+        if(valid) {
+            auto imageBytes=image();put32(imageBytes,4,1);put32(imageBytes,8,2);
+            for(int i=0;i<17;++i) put32(imageBytes,0xFFB88+i*12,0x5AA5A55A);
+            put32(imageBytes,0xFFB80,4);put32(imageBytes,0xFFB84,end==12?12:11);put32(imageBytes,0xFFB88,0x5AA5A557);
+            const auto prepared=SubaruSH7058Safety::prepare(imageBytes,"SH7058",true,true);
+            QCOMPARE(int(prepared.state),int(C::State::Valid));QVERIFY(SubaruSH7058Safety::preservesInput(prepared,imageBytes));
+        }
+    }
     void checksumArithmetic() {
         QByteArray bytes(64,'\0'); put32(bytes,4,1); put32(bytes,8,2);
         put32(bytes,32,4); put32(bytes,36,12); put32(bytes,40,0);
@@ -347,11 +478,16 @@ private slots:
         expected<<SUB_KERNEL_GET_MAX_MSG_SIZE<<SUB_KERNEL_GET_MAX_BLK_SIZE
                 <<(testWrite?SUB_KERNEL_FLASH_DISABLE:SUB_KERNEL_FLASH_ENABLE)<<SUB_KERNEL_PROG_VOLT<<SUB_KERNEL_BLANK_PAGE;
         for(int i=0;i<8;++i) expected<<SUB_KERNEL_WRITE_FLASH_BUFFER;
-        expected<<(testWrite?SUB_KERNEL_VALIDATE_FLASH_BUFFER:SUB_KERNEL_COMMIT_FLASH_BUFFER);
+        expected<<SUB_KERNEL_VALIDATE_FLASH_BUFFER;
+        if(!testWrite) expected<<SUB_KERNEL_COMMIT_FLASH_BUFFER;
         for(int i=0;i<16;++i) expected<<SUB_KERNEL_CRC;
         QCOMPARE(commands(),expected);
         QByteArray trace;
         for (const auto &a:port.writes) {
+            // The only intentional trace addition is pre-commit RAM validation.
+            // Its bytes are compared below; all original transmissions retain
+            // the historical golden trace after removing that one added command.
+            if(!testWrite && uint8_t(a.at(8))==SUB_KERNEL_VALIDATE_FLASH_BUFFER) continue;
             QByteArray length(4, '\0'); put32(length,0,uint32_t(a.size()));
             trace += length; trace += a;
         }
@@ -361,6 +497,11 @@ private slots:
             "a7f629163a60e21569202a7ebe6bd74a99353826ed6238b076abaca251a85703" :
             "313959741b6a29c3182871eb3ee854976018c7c7cd8ad2231b9b0e3244788adf"));
         for(const auto &a:port.writes) {
+            if(!testWrite && uint8_t(a.at(8))==SUB_KERNEL_VALIDATE_FLASH_BUFFER) {
+                auto commit=port.writes.at(port.writes.indexOf(a)+1);
+                QCOMPARE(uint8_t(commit.at(8)),uint8_t(SUB_KERNEL_COMMIT_FLASH_BUFFER));
+                commit[8]=char(SUB_KERNEL_VALIDATE_FLASH_BUFFER);QCOMPARE(a,commit);
+            }
             QCOMPARE(a.left(4),QByteArray::fromHex("000007e0"));
             if(uint8_t(a.at(8))==SUB_KERNEL_WRITE_FLASH_BUFFER) {
                 QCOMPARE(a.size(),525); auto addr=get32(a,9);
@@ -494,7 +635,7 @@ private slots:
                 bad=valid+QByteArray(1,'x'); const int length=bad.size()-8; bad[6]=char(length>>8);bad[7]=char(length);
                 row("/declared-extra",bad,uint8_t(request.at(8))==SUB_KERNEL_ID ? S::Success : S::Malformed);
                 bad=valid.left(8)+QByteArray::fromHex("7f")+request.mid(8,1)+QByteArray::fromHex("22"); bad[6]=0;bad[7]=3;
-                row("/negative",bad,S::Malformed);
+                row("/negative",bad,S::Rejected);
             } else {
                 row("/negative",diagnosticResponse(QByteArray::fromHex("7f")+request.mid(4,1)+QByteArray::fromHex("22")),S::Rejected);
                 row("/pending",diagnosticResponse(QByteArray::fromHex("7f")+request.mid(4,1)+QByteArray::fromHex("78")),S::Unsupported);
