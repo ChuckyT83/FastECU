@@ -1,3 +1,4 @@
+#include "report_summary.h"
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QJsonDocument>
@@ -93,7 +94,7 @@ static QJsonObject isolatedDevice(const QString &driverId,const QString &kind,co
 }
 
 int main(int argc,char **argv) {
-    QCoreApplication app(argc,argv);app.setApplicationName("fastecu-j2534-diagnostics");app.setApplicationVersion("006O-1");
+    QCoreApplication app(argc,argv);app.setApplicationName("fastecu-j2534-diagnostics");app.setApplicationVersion("006P-1");
     QCommandLineParser parser;parser.addHelpOption();parser.addVersionOption();
     parser.addOption({"validate-device","Explicit isolated USB-only open/version/close; reviewed OBDX driver only","id"});
     parser.addOption({"adapter-kind","obdx-pro-vx, openport-clone, or unreviewed (default)","kind","unreviewed"});
@@ -101,6 +102,7 @@ int main(int argc,char **argv) {
     parser.addOption({"reviewed-open-behavior","Owner affirms independent review of this driver's open/firmware behavior; not verified by the tool"});
     parser.addOption({"driver-sha256","Exact reviewed driver hash; selection integrity, not compatibility proof","sha256"});
     parser.addOption({"output","Write a NEW structured JSON report; existing files are never overwritten","file"});
+    parser.addOption({"summary","Write a NEW readable text summary alongside JSON; same privacy settings","file"});
     parser.addOption({"inspect-file","Passively inspect an installer/DLL without executing it","file"});
     parser.addOption({"usb-all","Include all present USB devices instead of adapter-description candidates; instance suffixes remain redacted"});
     parser.addOption({"include-private-details","Explicitly include full paths and USB instance identifiers; review before sharing"});
@@ -127,8 +129,32 @@ int main(int argc,char **argv) {
             return code;
         }
         result=redact(result,privateDetails).toObject();result["private_details_included"]=privateDetails;
-        if(parser.isSet("output") && !writeNewJson(parser.value("output"),result)) {
-            result["export_error"]="Report destination unavailable or already exists; no existing file overwritten";result["ok"]=false;code=1;
+        result["request_refused"] = code == 2;
+        QFile jsonFile(parser.value("output")), summaryFile(parser.value("summary"));
+        if (parser.isSet("output") && !jsonFile.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            result["export_error"] = "Report destination unavailable or already exists; no existing file overwritten";
+            result["ok"] = false; code = 1;
+        }
+        if (parser.isSet("summary") && !summaryFile.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+            result["summary_export_error"] = "Summary destination unavailable or already exists; no existing file overwritten";
+            result["ok"] = false; code = 1;
+        }
+        result["human_summary"] = humanSummary(result);
+        if (summaryFile.isOpen()) {
+            const auto bytes = result["human_summary"].toString().toUtf8();
+            if (summaryFile.write(bytes) != bytes.size() || !summaryFile.flush()) {
+                result["summary_export_error"] = "Failed writing readable summary";
+                result["ok"] = false; code = 1;
+                result["human_summary"] = humanSummary(result);
+            }
+        }
+        if (jsonFile.isOpen()) {
+            const auto bytes = QJsonDocument(result).toJson(QJsonDocument::Indented);
+            if (jsonFile.write(bytes) != bytes.size() || !jsonFile.flush()) {
+                result["export_error"] = "Failed writing JSON report";
+                result["ok"] = false; code = 1;
+                result["human_summary"] = humanSummary(result);
+            }
         }
         QTextStream(stdout)<<QJsonDocument(result).toJson(QJsonDocument::Indented);return code;
     };

@@ -58,9 +58,44 @@ private slots:
         const auto r=run({"--inspect-file",path});QCOMPARE(exitCode,0);QCOMPARE(r["file_info"].toObject()["sha256"].toString(),hash(path));QVERIFY(r["file"].toString().startsWith("<redacted-directory>"));QVERIFY(!r["device_opened"].toBool());
         const auto raw=run({"--inspect-file",path,"--include-private-details"});QCOMPARE(raw["file"].toString(),path);
     }
+    void readableSummaryAndPrivacy(){
+        const auto path=directory.filePath("summary-"+QUuid::createUuid().toString(QUuid::Id128)+".txt");
+        const auto r=run({"--identification-plan","--summary",path});QCOMPARE(exitCode,2);
+        QVERIFY(r["request_refused"].toBool());QVERIFY(r["human_summary"].toString().contains("REFUSED"));
+        QFile f(path);QVERIFY(f.open(QIODevice::ReadOnly));const auto original=f.readAll();f.close();
+        QCOMPARE(original,r["human_summary"].toString().toUtf8());
+        const auto again=run({"--identification-plan","--summary",path});QCOMPARE(exitCode,1);
+        QVERIFY(again.contains("summary_export_error"));QVERIFY(f.open(QIODevice::ReadOnly));QCOMPARE(f.readAll(),original);
+    }
+    void missingFileSummary(){const auto r=run({"--inspect-file",directory.filePath("not-present.dll")});QCOMPARE(exitCode,1);QVERIFY(r["human_summary"].toString().contains("missing"));QVERIFY(!r["human_summary"].toString().contains(directory.path()));}
     void invalidCollectToken(){const auto r=run({"--collect","../outside"});QCOMPARE(exitCode,2);QVERIFY(r.contains("error"));}
 #ifdef Q_OS_WIN
-    void emptyRegistry(){const auto r=run({});QCOMPARE(exitCode,0);QVERIFY(r["drivers"].toArray().isEmpty());QCOMPARE(r["status"].toString(),QString("no_drivers_registered"));QVERIFY(!r["device_opened"].toBool());QVERIFY(r["test_build"].toBool());}
+    void emptyRegistry(){const auto r=run({});QCOMPARE(exitCode,0);QVERIFY(r["drivers"].toArray().isEmpty());QCOMPARE(r["status"].toString(),QString("no_drivers_registered"));QVERIFY(!r["device_opened"].toBool());QVERIFY(r["test_build"].toBool());QVERIFY(r["human_summary"].toString().contains("not installed/registered"));}
+    void passiveProblems_data(){
+        QTest::addColumn<QString>("kind");QTest::addColumn<QString>("issue");
+        QTest::newRow("missing")<<QString("missing")<<QString("missing or inaccessible");
+        QTest::newRow("malformed")<<QString("malformed")<<QString("Not a Windows PE DLL");
+        QTest::newRow("wrong-bitness")<<QString("wrong-bitness")<<QString("architecture does not match");
+    }
+    void passiveProblems(){
+        QFETCH(QString,kind);QFETCH(QString,issue);
+        const auto path=directory.filePath("passive-"+kind+".dll");
+        if(kind!="missing") {
+            QFile f(path);QVERIFY(f.open(QIODevice::WriteOnly));QByteArray bytes(512,0);
+            if(kind=="wrong-bitness") {
+                bytes.replace(0,2,"MZ");bytes[60]=64;bytes.replace(64,4,QByteArray("PE\0\0",4));
+                const unsigned machine=sizeof(void*)==8?0x14c:0x8664;
+                bytes[68]=char(machine&255);bytes[69]=char(machine>>8);bytes[70]=1;
+                bytes[84]=char(sizeof(void*)==8?96:112);bytes[87]=0x20;
+                bytes[88]=0x0b;bytes[89]=char(sizeof(void*)==8?1:2);
+            }
+            f.write(bytes);f.close();
+        }
+        registration(path);const auto r=run({});QCOMPARE(exitCode,0);
+        QCOMPARE(r["drivers"].toArray().size(),1);QVERIFY(r["human_summary"].toString().contains(issue));
+        QVERIFY(!r["human_summary"].toString().contains(directory.path()));
+        QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));QVERIFY(!r["device_opened"].toBool());
+    }
     void passiveDoesNotCallDriver(){registration(mock());const auto r=run({});QCOMPARE(exitCode,0);QCOMPARE(r["drivers"].toArray().size(),1);QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));QVERIFY(!r["device_opened"].toBool());QCOMPARE(r["process_architecture"].toString(),QSysInfo::buildCpuArchitecture());}
     void cloneBlocked(){registration(mock(),"Tactrix OpenPort clone fixture");const auto r=run(deviceArgs(mock()));QCOMPARE(exitCode,2);QVERIFY(r.contains("error"));QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));}
     void missingReviewBlocked(){registration(mock());auto args=deviceArgs(mock());args.removeAll("--reviewed-open-behavior");const auto r=run(args);QCOMPARE(exitCode,2);QVERIFY(r.contains("error"));QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));}

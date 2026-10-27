@@ -5,6 +5,29 @@ STI, a powered ECU or any vehicle. Do not use FastECU's ROM Read, Write or Test
 Write actions.** ROM Read is not the passive diagnostic mode: it can enter
 diagnostic/security sessions. SH7058 programming gates remain in place.
 
+## Quick sequence
+
+1. With both adapters disconnected, extract and hash-check the reviewed package.
+   Run the standalone passive diagnostic first; no driver or attached cable is
+   needed. The full GUI is optional for arrival checks. Do not use its ROM Read.
+2. OBDX Pro VX: preserve/hash/signature-check the official VX installer; review
+   installation and firmware behavior, then install only reviewed official
+   drivers in the manufacturer's order. An independently approved USB-only
+   recognition check must keep the vehicle/DLC cable disconnected.
+3. Record Windows Device Manager USB IDs, provider/version and problem code.
+   USB recognition is not validated J2534 compatibility.
+4. Run Stage A below. Keep the timestamped JSON **and adjacent readable `.txt`**.
+   Review missing DLLs, PE architecture and driver versions. Use the x86 kit for
+   an x86 DLL; the GUI remains x64. **Stop before Stage B pending explicit approval.**
+5. Clone: preserve supplied software, inspect hashes/signatures/metadata, and do
+   not launch its EcuFlash or execute its driver. USB identification, if separately
+   approved after reviewing automatic driver binding, is observational only.
+   Passive diagnostics can run with the clone absent. Defer execution to Task 007.
+
+No firmware update is recommended. No physical operation is authorized by CI
+success or by this checklist; the sequence describes preparation for later
+approved actions.
+
 ## Before installing software
 
 1. Keep the OBDX Pro VX and OpenPort clone physically separate; inspect the
@@ -89,6 +112,7 @@ present USB metadata (serial/instance suffixes remain redacted):
   this tool is **not** a cross-bitness flashing bridge.
 - USB kernel drivers follow Windows OS architecture; J2534 user-mode DLLs must
   match the diagnostic process architecture. They are different layers.
+- Read the adjacent `.txt` summary for a quick triage; JSON retains full statuses.
 - Save the initial JSON, review it locally and share the redacted JSON for
   review. Do not share raw vendor software/private worker files indiscriminately.
   `--include-private-details` is an explicit disclosure decision.

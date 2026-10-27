@@ -121,6 +121,7 @@ try {
 } finally {Pop-Location;$env:PATH=$saved}
 $files=Get-ChildItem $package -Recurse -File | ForEach-Object { @{path=$_.FullName.Substring($package.Length+1);sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} }
 $files | ConvertTo-Json | Set-Content (Join-Path $package 'SHA256.json')
+& (Join-Path $PSScriptRoot 'test-packaged-diagnostics.ps1') -PackageDirectory $package -Architecture $Architecture -EvidenceDirectory (Join-Path $logs 'relocated-passive')
 $summary="Architecture: $Architecture; commit: $commit; executable SHA256: $($self.file_info.sha256); unit: $((Get-Content (Join-Path $logs 'unit-results.txt') | Select-String 'Totals:') -join ' '); CLI: $((Get-Content (Join-Path $logs 'cli-results.txt') | Select-String 'Totals:') -join ' '); packaged passive/help/self-PE: passed"
 $summary | Set-Content (Join-Path $logs 'summary.txt')
 Write-Output "::notice title=Native diagnostic toolkit results::$summary"

@@ -16,9 +16,11 @@ if(-not(Test-Path $exe)){throw 'Diagnostic executable missing; extract the compl
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 $name=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')+"-$Adapter-$Architecture.json"
 $report=Join-Path $OutputDirectory $name
-$arguments=@('--adapter-kind',$Adapter,'--output',$report)
+$summary=[IO.Path]::ChangeExtension($report, '.txt')
+$arguments=@('--adapter-kind',$Adapter,'--output',$report,'--summary',$summary)
 if($AllUsb){$arguments+='--usb-all'}
 & $exe @arguments
 $code=$LASTEXITCODE
-Write-Output "Local report: $report (review JSON before sharing; device instance suffixes and paths redacted by default)"
+if(Test-Path $summary){Get-Content $summary | Write-Host}
+Write-Output "Local report: $report; readable summary: $summary (review JSON before sharing; device instance suffixes and paths redacted by default)"
 exit $code

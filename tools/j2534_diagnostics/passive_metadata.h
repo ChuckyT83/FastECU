@@ -140,7 +140,7 @@ inline QJsonValue redact(const QJsonValue &value,bool includePrivate,const QStri
     return value;
 }
 inline QJsonObject base(const QString &commit) {
-    return {{"schema","fastecu.device-diagnostics.v2"},{"tool_version","006O-1"},{"development_commit",commit},
+    return {{"schema","fastecu.device-diagnostics.v2"},{"tool_version","006P-1"},{"development_commit",commit},
         {"timestamp_utc",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {"windows_product",QSysInfo::prettyProductName()},{"kernel_version",QSysInfo::kernelVersion()},
         {"process_architecture",QSysInfo::buildCpuArchitecture()},{"host_architecture",QSysInfo::currentCpuArchitecture()},

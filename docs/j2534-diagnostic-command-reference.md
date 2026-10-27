@@ -9,7 +9,7 @@ native tests alone create temporary HKCU fixtures.
 
 ```powershell
 # Default: Stage A, registry/file metadata and candidate USB descriptions only
-.\fastecu-j2534-diagnostics.exe --output .\passive-new.json
+.\fastecu-j2534-diagnostics.exe --output .\passive-new.json --summary .\passive-new.txt
 
 # Classify/hash an untrusted local file without loading/executing it
 .\fastecu-j2534-diagnostics.exe --inspect-file 'C:\Intake\driver.dll' --output .\file-new.json
@@ -20,6 +20,13 @@ native tests alone create temporary HKCU fixtures.
 # Full local paths/USB instance identifiers: explicit disclosure, not the default
 .\fastecu-j2534-diagnostics.exe --include-private-details --output .\private-new.json
 ```
+
+`--summary <new-file.txt>` writes a concise human-readable report using the same
+privacy settings as JSON. JSON also contains `human_summary`. The collection
+script automatically creates timestamped `.json`/`.txt` pairs. A summary labels
+missing registration, missing/malformed DLLs, PE bitness mismatches and hardware
+that remains untested. An empty USB candidate list is not proof of physical
+absence. Registry errors and refused requests are not compatibility success.
 
 Existing reports are never overwritten. Invalid/unavailable output paths return
 nonzero and preserve operation/error details on stdout. A completed empty driver
