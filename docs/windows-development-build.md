@@ -31,6 +31,10 @@ The CI runner's minimal MSYS2 image is explicitly updated with its official
 package manager and provisioned with `make`/`perl`; package versions and
 provisioning output are retained. For a local build, install those tools before
 running the packaging script.
+QUIC is disabled in this build-only OpenSSL dependency: Qt's matching MinGW 8.1
+headers lack `SIO_UDP_NETRESET`, required by OpenSSL 3.5.5's QUIC code. FastECU
+links static crypto, not this dependency's SSL/QUIC library; this does not qualify
+or alter Qt's independent TLS backend.
 
 ```powershell
 ./tools/windows/package-development.ps1 -OpenSslSource C:/deps/openssl-source `

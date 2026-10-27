@@ -16,7 +16,7 @@ cd "$task_build"
 command -v gcc perl make
 gcc --version
 perl -V:osname -V:archname
-perl "$task_source/Configure" mingw64 no-shared no-tests no-asm \
+perl "$task_source/Configure" mingw64 no-shared no-tests no-asm no-quic \
     --libdir=lib "--prefix=$task_prefix"
 make -j2
 make install_sw
