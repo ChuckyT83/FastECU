@@ -16,7 +16,11 @@ $required = @('FastECU.exe', 'qt.conf', 'platforms/qwindows.dll',
     'LICENSE', 'third-party-licenses', 'diagnostics/x64/fastecu-j2534-diagnostics.exe')
 # qmake's Charts SDK declaration does not imply an imported Charts runtime:
 # the application currently has no QChart symbols. Check the real PE imports.
-$imports = @(& objdump.exe -p (Join-Path $package 'FastECU.exe') |
+$qtRoot = (& qmake.exe -query QT_INSTALL_PREFIX).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Qt SDK location unavailable for matching PE inspector' }
+$objdump = Join-Path (Split-Path (Split-Path $qtRoot)) 'Tools/mingw810_64/bin/objdump.exe'
+if (-not (Test-Path $objdump)) { throw 'Matching MinGW PE inspector missing' }
+$imports = @(& $objdump -p (Join-Path $package 'FastECU.exe') |
     Select-String '^\s*DLL Name:' | ForEach-Object { ($_.Line -replace '^\s*DLL Name:\s*','').Trim() })
 if ($LASTEXITCODE -ne 0 -or $imports.Count -eq 0) { throw 'Cannot inspect packaged executable imports' }
 $imports | Set-Content (Join-Path $logs 'application-imports.txt')
