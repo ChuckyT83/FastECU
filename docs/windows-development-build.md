@@ -45,7 +45,7 @@ Alternatively, after building the matching crypto dependency:
 
 ```powershell
 qmake.exe C:/src/FastECU/FastECU.pro CONFIG+=release CONFIG-=debug_and_release `
-    OPENSSL_PREFIX=C:/deps/openssl-x64
+    DESTDIR=release OPENSSL_PREFIX=C:/deps/openssl-x64
 mingw32-make.exe -j2
 ```
 

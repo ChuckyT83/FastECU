@@ -53,10 +53,10 @@ $appBuild = Join-Path $build 'application'
 New-Item -ItemType Directory -Force $appBuild | Out-Null
 Push-Location $appBuild
 try {
-    Invoke-Logged 'app-qmake' 'qmake.exe' @((Join-Path $source 'FastECU.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', "OPENSSL_PREFIX=$sslPrefix")
+    Invoke-Logged 'app-qmake' 'qmake.exe' @((Join-Path $source 'FastECU.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=release', "OPENSSL_PREFIX=$sslPrefix")
     Invoke-Logged 'app-build' 'mingw32-make.exe' @('-j2')
     $exe = Join-Path $appBuild 'release/FastECU.exe'
-    if (-not (Test-Path $exe)) { throw 'Full application executable was not produced' }
+    if (-not (Test-Path $exe)) { throw "Full application executable not found at the explicit qmake destination: $exe" }
     $package = Join-Path $build 'FastECU-offline-development-x64'
     New-Item -ItemType Directory -Force $package | Out-Null
     Copy-Item $exe $package
