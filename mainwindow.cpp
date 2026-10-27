@@ -55,16 +55,17 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
     QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
 
     setSplashScreenProgress("Reading config files...", 10);
-    fileActions = new FileActions();
+    fileActions = new FileActions(this);
     configValues = &fileActions->ConfigValuesStruct;
     fileActions->set_base_dirs(configValues);
+    fileActions->check_config_dirs(configValues); // Create log/profile parents before logger startup.
 
     software_name = configValues->software_name;
     software_title = configValues->software_title;
     software_version = configValues->software_version;
     this->setWindowTitle(software_title + " " + software_version);
 
-    QThread *syslog_thread = new QThread();
+    syslog_thread = new QThread(this);
     syslogger = new SystemLogger(configValues->syslog_files_directory, software_name, software_version);
     syslogger->moveToThread(syslog_thread);
     QObject::connect(this, &MainWindow::LOG_E, syslogger, &SystemLogger::log_messages);
@@ -75,7 +76,7 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
     QObject::connect(syslogger, &SystemLogger::send_message_to_log_window, this, &MainWindow::send_message_to_log_window);
     QObject::connect(syslogger, &SystemLogger::finished, syslog_thread, &QThread::quit);
     QObject::connect(syslogger, &SystemLogger::finished, syslogger, &SystemLogger::deleteLater);
-    QObject::connect(syslog_thread, &QThread::finished, syslog_thread, &QThread::deleteLater);
+    QObject::connect(syslog_thread, &QThread::finished, syslogger, &SystemLogger::deleteLater);
     QObject::connect(syslog_thread, &QThread::started, syslogger, &SystemLogger::run);
     syslog_thread->start();
 
@@ -106,8 +107,6 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
     QObject::connect(calibrationTreeWidget, &CalibrationTreeWidget::LOG_W, syslogger, &SystemLogger::log_messages);
     QObject::connect(calibrationTreeWidget, &CalibrationTreeWidget::LOG_I, syslogger, &SystemLogger::log_messages);
     QObject::connect(calibrationTreeWidget, &CalibrationTreeWidget::LOG_D, syslogger, &SystemLogger::log_messages);
-
-    fileActions->check_config_dirs(configValues);
 
     configValues = fileActions->read_config_file(configValues);
 
@@ -148,8 +147,11 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
         this->setWindowState(Qt::WindowMaximized);
 
     setSplashScreenProgress("Preparing ROM definitions...", 10);
-    if (!configValues->romraider_definition_files.length() && !configValues->ecuflash_definition_files_directory.length())
-        QMessageBox::warning(this, tr("Ecu definition file"), "No definition file(s), use 'Settings' in 'Edit' menu to choose file(s)");
+    // Definitions are optional for startup/passive adapter preparation. Warn only
+    // when a definition source is explicitly enabled but has no configured path.
+    if ((configValues->use_romraider_definitions == "enabled" && configValues->romraider_definition_files.isEmpty()) ||
+        (configValues->use_ecuflash_definitions == "enabled" && configValues->ecuflash_definition_files_directory.isEmpty()))
+        QMessageBox::warning(this, tr("Ecu definition file"), "Enabled definition source has no files; choose files in Edit > Settings.");
 
     setSplashScreenProgress("Preparing EcuFlash ROM definitions...", 10);
     fileActions->create_ecuflash_def_id_list(configValues);
@@ -485,6 +487,9 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
     //aes_ecb_example();
     // AES-128 ECB examples end
 */
+    setProperty("startupProtocolCount", configValues->flash_protocol_id.size());
+    setProperty("startupLoggerReady", logValues != nullptr);
+    setProperty("startupLoggerDefinitionConfigured", !configValues->romraider_logger_definition_file.isEmpty());
     emit LOG_I("FastECU initialized", true, true);
 }
 
@@ -496,6 +501,12 @@ MainWindow::~MainWindow()
         log_params_request_started = false;
         log_ssm_values();
         delay(200);
+    }
+    // Drain logger delivery and stop its event loop before deleting the window.
+    if (syslog_thread && syslog_thread->isRunning()) {
+        QMetaObject::invokeMethod(syslogger, [] {}, Qt::BlockingQueuedConnection);
+        syslog_thread->quit();
+        syslog_thread->wait();
     }
     //ssm_init_poll_timer->stop();
     //serial_poll_timer->stop();

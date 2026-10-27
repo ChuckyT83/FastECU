@@ -282,6 +282,7 @@ private:
 
     QSize toolbar_item_size = QSize(24, 24);
 
+    QThread *syslog_thread = nullptr;
     SystemLogger *syslogger;
     Ui::MainWindow *ui;
 

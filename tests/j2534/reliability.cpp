@@ -11,6 +11,15 @@ class J2534ReliabilityTest : public QObject {
     }
 private slots:
     void init() { MockJ2534::reset(); }
+    void guiSmokeCannotOpenHardware() {
+        SerialPortActionsDirect port; configure(port);
+        qApp->setProperty("guiSmokeTest", true);
+        const auto initResult = port.init_j2534_connection();
+        const auto opened = port.open_serial_port();
+        qApp->setProperty("guiSmokeTest", false);
+        QCOMPARE(initResult, STATUS_ERROR);QVERIFY(opened.isEmpty());QVERIFY(MockJ2534::calls.isEmpty());
+        QVERIFY(!port.is_serial_port_open());
+    }
     void success_data() {
         QTest::addColumn<int>("protocol");
         for (int p : {ISO15765, CAN, ISO9141, ISO14230}) QTest::newRow(qPrintable(QString::number(p))) << p;

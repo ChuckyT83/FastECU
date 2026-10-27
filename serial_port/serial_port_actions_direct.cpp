@@ -395,6 +395,7 @@ QSettings::Format SerialPortActionsDirect::driver_registry_format()
 //TODO find all devices
 QStringList SerialPortActionsDirect::check_j2534_devices(QMap<QString, QString> installed_drivers)
 {
+    if (qApp && qApp->property("guiSmokeTest").toBool()) return {};
     close_j2534_serial_port();
     bool j2534DeviceFound = false;
     QStringList j2534_devices;
@@ -474,6 +475,7 @@ QMap<QString, QString> SerialPortActionsDirect::read_j2534_registry(QSettings &r
 
 QString SerialPortActionsDirect::open_serial_port()
 {
+    if (qApp && qApp->property("guiSmokeTest").toBool()) return {};
     if (serial_port_list.isEmpty())
         return {};
     emit LOG_D("Serial port = " + serial_port_list.join(", "), true, true);
@@ -1204,6 +1206,7 @@ bool SerialPortActionsDirect::get_serial_num(char* serial, size_t capacity)
 
 int SerialPortActionsDirect::init_j2534_connection()
 {
+    if (qApp && qApp->property("guiSmokeTest").toBool()) return STATUS_ERROR;
     close_j2534_serial_port();
     const auto fail = [this]() {
         close_j2534_serial_port();

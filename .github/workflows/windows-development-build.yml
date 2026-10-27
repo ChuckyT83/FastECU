@@ -158,6 +158,9 @@ jobs:
           Copy-Item tools/windows/collect-adapter-diagnostics.ps1 $package
           Copy-Item docs/adapter-arrival-checklist.md,docs/j2534-diagnostic-command-reference.md,docs/adapter-diagnostics-troubleshooting.md $package
           Get-ChildItem $package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 500 | Set-Content build-windows-development/logs/package-sha256.txt
+      - name: Validate complete relocated native GUI package
+        shell: pwsh
+        run: ./tools/windows/test-packaged-gui.ps1 -PackageDirectory build-windows-development/FastECU-offline-development-x64 -EvidenceDirectory build-windows-development/logs/gui-smoke
       - name: Report installer failures
         if: failure()
         shell: pwsh

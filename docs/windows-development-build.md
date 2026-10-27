@@ -79,3 +79,38 @@ The owner authorized Task 006M publication after local review. The published
 development revision triggers both native MSVC regressions and the full MinGW
 application job; older runs do not validate new code. Consult the exact run and
 commit before claiming either Windows test or application-build success.
+
+## Native packaged GUI validation (Task 006P)
+
+The original `--help` smoke is retained. The development workflow additionally
+runs `tools/windows/test-packaged-gui.ps1` after assembling the final package.
+It checks required DLLs/plugins/defaults/notices, copies the package to a path
+with spaces outside the build tree and launches the actual `FastECU.exe` from an
+unrelated working directory with SDK/plugin paths removed and the native
+Windows platform selected.
+
+`--gui-smoke-test <new-result.json>` creates QApplication and the real MainWindow
+with a disposable empty profile, disables input and device opening/probing, and
+refuses remote/trace arguments. Local COM/registry enumeration remains passive;
+no driver is loaded or opened. The test requires a visible/exposed native window,
+paint events and 20 timer heartbeats, captures a screenshot, closes through
+`closeEvent` and records destruction after logger shutdown. Unexpected dialogs
+fail validation. A 45-second external process watchdog catches constructor,
+event-loop and shutdown hangs/crashes; only the hardware-disabled test process
+may be killed. A separate missing-config case must fail. No flashing gate is
+changed by the smoke option.
+
+Profile creation now creates missing parents. Disabled XML definition sources and an unconfigured optional logger definition
+need no first-run dialog; live logging remains unavailable until configured; enabled-but-unconfigured sources still warn. Local
+startup leaves the remote utility idle. The packaged defaults remain embedded
+and shipped under `config`; no external ROM XML is needed for passive arrival
+checks. Real ECU identification and BIN/XML matching remain separate work.
+
+Owner requirements: Windows x64 for the GUI (Windows Server 2022 is CI-tested;
+Windows 10/11 desktop behavior is not independently qualified), an extractable
+writable location, writable temporary/user-profile directories and PowerShell
+5.1+ for the passive collection wrapper. No Qt SDK/compiler or driver is required
+for Stage A. MinGW/Qt runtimes and qwindows are bundled. Native CI verification
+scripts use PowerShell 7.2+ and are not required on the owner's PC. Driver install,
+bitness and review are separate from application dependencies. GUI rendering
+beyond startup and remote TLS remain outside the smoke's coverage.

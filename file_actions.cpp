@@ -10,6 +10,9 @@ FileActions::FileActions(QWidget *parent)
 
 FileActions::ConfigValuesStructure *FileActions::set_base_dirs(ConfigValuesStructure *configValues)
 {
+    // Smoke profiles are isolated; normal startup still uses the user's profile.
+    const auto smokeRoot = qApp->property("guiSmokeProfile").toString();
+    if (!smokeRoot.isEmpty()) configValues->base_config_directory = smokeRoot + "/profile/";
     QDir currentPath(QDir::currentPath());
     QStringList isDevPath = currentPath.absolutePath().split("build");
     bool isDevFile = false;
@@ -30,7 +33,7 @@ FileActions::ConfigValuesStructure *FileActions::set_base_dirs(ConfigValuesStruc
         isDevFile = true;
     }
 
-    if (isDevPath.length() > 1 || isDevFile)
+    if (smokeRoot.isEmpty() && (isDevPath.length() > 1 || isDevFile))
     {
         emit LOG_D("App is started on dev path, base path set to:" + currentPath.absolutePath(), true, true);//isDevPath.at(0);
         configValues->base_config_directory = currentPath.absolutePath();
@@ -103,7 +106,7 @@ FileActions::ConfigValuesStructure *FileActions::check_config_dirs(ConfigValuesS
     // Check if fastecu directory exists in users home config folder
     emit LOG_D("Config base dir " + configValues->base_config_directory, true, true);
     if (!QDir(configValues->base_config_directory).exists()){
-        QDir().mkdir(configValues->base_config_directory);
+        QDir().mkpath(configValues->base_config_directory);
     }
 
     if (isDevPath.length() < 2)
@@ -122,18 +125,18 @@ FileActions::ConfigValuesStructure *FileActions::check_config_dirs(ConfigValuesS
 
         // Check if current fastecu version directory exists in users home config folder
         if (!QDir(configValues->version_config_directory).exists()){
-            QDir().mkdir(configValues->version_config_directory);
+            QDir().mkpath(configValues->version_config_directory);
         }
     }
     emit LOG_D("Cal dir: " + configValues->calibration_files_directory, true, true);
     // Check if fastecu calibration files directory exists
     if (!QDir(configValues->calibration_files_directory).exists()){
-        QDir().mkdir(configValues->calibration_files_directory);
+        QDir().mkpath(configValues->calibration_files_directory);
     }
 
     // Check if fastecu config files directory exists
     if (!QDir(configValues->config_files_directory).exists()){
-        QDir().mkdir(configValues->config_files_directory);
+        QDir().mkpath(configValues->config_files_directory);
         // Copy fastecu.cfg from latest previous config
         LOG_D("Copy " + latest_config_dir + "/config/fastecu.cfg --> " + configValues->config_files_directory + "fastecu.cfg", true, true);
         QFile configFile(latest_config_dir + "/config/fastecu.cfg");
@@ -152,12 +155,12 @@ FileActions::ConfigValuesStructure *FileActions::check_config_dirs(ConfigValuesS
     }
     // Check if fastecu definition files directory exists
     if (!QDir(configValues->definition_files_directory).exists()){
-        QDir().mkdir(configValues->definition_files_directory);
+        QDir().mkpath(configValues->definition_files_directory);
     }
 
     // Check if fastecu kernel files directory exists
     if (!QDir(configValues->kernel_files_directory).exists()){
-        QDir().mkdir(configValues->kernel_files_directory);
+        QDir().mkpath(configValues->kernel_files_directory);
     }
     QDirIterator kernels(":/kernels/", QDirIterator::Subdirectories);
     while (kernels.hasNext()) {
@@ -173,13 +176,13 @@ FileActions::ConfigValuesStructure *FileActions::check_config_dirs(ConfigValuesS
 
     // Check if fastecu datalog files directory exists
     if (!QDir(configValues->datalog_files_directory).exists()){
-        QDir().mkdir(configValues->datalog_files_directory);
+        QDir().mkpath(configValues->datalog_files_directory);
     }
 
     // Check if fastecu syslog files directory exists
     QDir syslog_dir(configValues->syslog_files_directory);
     if (!QDir(configValues->syslog_files_directory).exists()){
-        QDir().mkdir(configValues->syslog_files_directory);
+        QDir().mkpath(configValues->syslog_files_directory);
     }
     if (QDir(configValues->syslog_files_directory).exists())
     {
@@ -1214,6 +1217,10 @@ FileActions::LogValuesStructure *FileActions::read_logger_definition_file()
     QDomDocument xmlBOM;
 
     QString filename = configValues->romraider_logger_definition_file;
+    if (filename.isEmpty()) {
+        emit LOG_I("No logger definitions configured; live logging is unavailable until configured in Settings.", true, true);
+        return logValues; // Optional on a fresh profile; never substitute fabricated definitions.
+    }
     //emit LOG_D("Logger filename = " + filename;
     QFile file(filename);
     if(!file.open(QFile::ReadOnly | QFile::Text)) {

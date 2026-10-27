@@ -2,6 +2,7 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include "gui_startup_smoke.h"
 
 int main(int argc, char *argv[])
 {
@@ -10,6 +11,7 @@ int main(int argc, char *argv[])
     QCommandLineParser cmdParser;
     cmdParser.setApplicationDescription("FastECU - software to work on and modify ECUs");
     cmdParser.addHelpOption();
+    cmdParser.addOption({"gui-smoke-test", "Show the real GUI with an isolated profile and hardware opening disabled, then close; write NEW result JSON", "file"});
     QCommandLineOption cmdHost(QStringList() << "s" << "host",
                                "Remote host address and port, for example 127.0.0.1:33314, local:33315",
                                "host:port");
@@ -60,6 +62,13 @@ int main(int argc, char *argv[])
 
         //Parser works only after QApplication initialization
         cmdParser.process(a);
+
+        if (cmdParser.isSet("gui-smoke-test")) {
+            if (cmdParser.isSet(cmdHost) || cmdParser.isSet(cmdPassword) || cmdParser.isSet(cmdTrace)) {
+                qCritical("GUI smoke refuses remote/trace options"); return 2;
+            }
+            return runGuiStartupSmoke(a, cmdParser.value("gui-smoke-test"));
+        }
 
         QString addr = cmdParser.value(cmdHost);
         QString password = cmdParser.value(cmdPassword);

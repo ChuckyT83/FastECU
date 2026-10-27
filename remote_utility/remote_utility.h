@@ -36,7 +36,7 @@ private:
     QString peerAddress;
     QString password;
     const QString autodiscoveryMessage = "FastECU_PTP_Autodiscovery";
-    RemoteUtilityReplica *remote_utility;
+    RemoteUtilityReplica *remote_utility = nullptr;
     const QString remoteObjectNameUtility = "FastECU_Utility";
     const QString wssPath = "/" + remoteObjectNameUtility;
     const QString webSocketPasswordHeader = "fastecu-basic-password";

@@ -1,3 +1,4 @@
+HEADERS += gui_startup_smoke.h
 QT += core gui xml serialport remoteobjects websockets
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets

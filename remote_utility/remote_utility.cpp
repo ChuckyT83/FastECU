@@ -18,6 +18,7 @@ RemoteUtility::RemoteUtility(QString peerAddress,
     , keepalive_interval(7000)
     , pings_sequently_missed_limit(5)
 {
+    if (peerAddress.isEmpty()) return; // Local GUI startup must not attempt networking.
     if (peerAddress.startsWith("local:"))
     {
         startLocal();
@@ -72,6 +73,7 @@ void RemoteUtility::websocket_connected(void)
 
 void RemoteUtility::waitForSource(void)
 {
+    if (!remote_utility) return;
     //Wait for replication
     while (!remote_utility->waitForSource(1000))
     {
@@ -91,21 +93,22 @@ void RemoteUtility::sendAutoDiscoveryMessage()
 
 bool RemoteUtility::send_log_window_message(QString message)
 {
-    return qtrohelper::slot_sync(remote_utility->send_log_window_message(message));
+    return remote_utility && qtrohelper::slot_sync(remote_utility->send_log_window_message(message));
 }
 
 bool RemoteUtility::set_progressbar_value(int value)
 {
-    return qtrohelper::slot_sync(remote_utility->set_progressbar_value(value));
+    return remote_utility && qtrohelper::slot_sync(remote_utility->set_progressbar_value(value));
 }
 
 QRemoteObjectReplica::State RemoteUtility::state(void) const
 {
-    return remote_utility->state();
+    return remote_utility ? remote_utility->state() : QRemoteObjectReplica::Uninitialized;
 }
 
 void RemoteUtility::ping(QString message)
 {
+    if (!remote_utility) return;
     //Using pointer because of async response
     QRemoteObjectPendingCallWatcher *watcher =
         new QRemoteObjectPendingCallWatcher(remote_utility->ping(message));
@@ -144,7 +147,7 @@ void RemoteUtility::stop_keepalive(void)
 
 bool RemoteUtility::isValid(void)
 {
-    return remote_utility->state() == QRemoteObjectReplica::Valid;
+    return remote_utility && remote_utility->state() == QRemoteObjectReplica::Valid;
 }
 
 void RemoteUtility::utilityRemoteStateChanged(QRemoteObjectReplica::State state, QRemoteObjectReplica::State oldState)
