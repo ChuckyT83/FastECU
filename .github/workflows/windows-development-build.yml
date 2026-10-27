@@ -42,13 +42,23 @@ jobs:
           target: desktop
           arch: win64_mingw81
           modules: qtcharts
-          tools: 'tools_mingw,8.1.0-1,qt.tools.win64_mingw810'
+          tools: 'tools_mingw,qt.tools.win64_mingw810'
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false
       - name: Build and package the complete gated application
         shell: pwsh
         run: ./tools/windows/package-development.ps1 -OpenSslSource .deps/openssl-source -BuildDirectory build-windows-development
+      - name: Report installer failures
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path aqtinstall.log) {
+            $tail = (Get-Content aqtinstall.log | Select-String '(?i)error|exception|arguments|archives|modules|available' | Select-Object -Last 12) -join "`n"
+            if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+            $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::notice title=Qt installer diagnostics::$tail"
+          }
       - name: Retain full build and package evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -1,8 +1,10 @@
 # Windows offline development build
 
 Task 006M prepares a full GUI build separately from the native MSVC production-
-component regression workflow. The new full-build job has **not been executed**
-while the Task 006M revision is unpublished. No Windows executable is claimed yet.
+component regression workflow. Its first native attempt failed during Qt/tool
+installation before application compilation. The MinGW tool input was corrected
+to the pinned action/aqt version's `tool,variant` grammar; no Windows executable
+is claimed before a successful build and packaged startup test.
 
 Use Windows Server 2022/Windows 10 or 11 x64, Qt 5.15.2 `win64_mingw81` including
 Charts/RemoteObjects/WebSockets/SerialPort, and Qt's matching MinGW 8.1 x64 tools.
@@ -55,7 +57,7 @@ separate hardware authorization, device-only Open/ReadVersion/Close. Install an
 official x64 04.04 OBDX J2534 driver for an x64 application; discovery/ABI checks
 and a successful mock DLL do not prove VX hardware compatibility.
 
-Task 006M must not be pushed or dispatched without separate owner authorization.
-Publishing the reviewed development commit would trigger both the native MSVC
-regressions and the prepared full MinGW application job; older runs do not
-validate these new changes.
+The owner authorized Task 006M publication after local review. The published
+development revision triggers both native MSVC regressions and the full MinGW
+application job; older runs do not validate new code. Consult the exact run and
+commit before claiming either Windows test or application-build success.
