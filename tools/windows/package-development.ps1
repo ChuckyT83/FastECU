@@ -46,7 +46,7 @@ $msysBin = 'C:/msys64/usr/bin'
 foreach ($tool in @('bash.exe', 'perl.exe', 'make.exe', 'cygpath.exe')) {
     if (-not (Test-Path (Join-Path $msysBin $tool))) { throw "MSYS2 build tool required: $msysBin/$tool" }
 }
-$opensslScript = (Join-Path $PSScriptRoot 'build-openssl-mingw.sh').Replace('\', '/')
+$opensslScript = (Join-Path $PSScriptRoot 'openssl-mingw.sh').Replace('\', '/')
 Invoke-Logged 'openssl-build' (Join-Path $msysBin 'bash.exe') @('--noprofile', '--norc', $opensslScript,
     $mingw.Replace('\', '/'), $sslSource.Replace('\', '/'), $sslBuild.Replace('\', '/'), $sslPrefix.Replace('\', '/'))
 $appBuild = Join-Path $build 'application'
