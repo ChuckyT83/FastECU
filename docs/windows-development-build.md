@@ -114,3 +114,10 @@ for Stage A. MinGW/Qt runtimes and qwindows are bundled. Native CI verification
 scripts use PowerShell 7.2+ and are not required on the owner's PC. Driver install,
 bitness and review are separate from application dependencies. GUI rendering
 beyond startup and remote TLS remain outside the smoke's coverage.
+
+Package validation inspects the actual PE DLL imports with the matching MinGW
+objdump before testing startup. The Charts SDK remains a qmake build input, but
+there are no QChart references in this application; windeployqt need not copy an
+unused Qt5Charts.dll. Every imported Qt/MinGW DLL is required in the package,
+along with qwindows and configuration/instructions. This avoids imposing an
+unused SDK module as a runtime dependency while retaining actual load checks.

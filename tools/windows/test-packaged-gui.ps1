@@ -9,11 +9,21 @@ $logs = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Force $logs | Out-Null
 $required = @('FastECU.exe', 'qt.conf', 'platforms/qwindows.dll',
     'Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Widgets.dll', 'Qt5Xml.dll', 'Qt5Network.dll',
-    'Qt5SerialPort.dll', 'Qt5RemoteObjects.dll', 'Qt5WebSockets.dll', 'Qt5Charts.dll',
+    'Qt5SerialPort.dll', 'Qt5RemoteObjects.dll', 'Qt5WebSockets.dll',
     'config/fastecu.cfg', 'config/menu.cfg', 'config/protocols.cfg', 'config/logger.cfg',
     'collect-adapter-diagnostics.ps1', 'adapter-arrival-checklist.md',
     'j2534-diagnostic-command-reference.md', 'adapter-diagnostics-troubleshooting.md',
     'LICENSE', 'third-party-licenses', 'diagnostics/x64/fastecu-j2534-diagnostics.exe')
+# qmake's Charts SDK declaration does not imply an imported Charts runtime:
+# the application currently has no QChart symbols. Check the real PE imports.
+$imports = @(& objdump.exe -p (Join-Path $package 'FastECU.exe') |
+    Select-String '^\s*DLL Name:' | ForEach-Object { ($_.Line -replace '^\s*DLL Name:\s*','').Trim() })
+if ($LASTEXITCODE -ne 0 -or $imports.Count -eq 0) { throw 'Cannot inspect packaged executable imports' }
+$imports | Set-Content (Join-Path $logs 'application-imports.txt')
+foreach ($dll in $imports) {
+    if ($dll -match '^(Qt5|libgcc|libstdc|libwinpthread)') { $required += $dll }
+}
+Write-Output ("::notice title=Packaged application imports::" + ($imports -join ', '))
 foreach ($file in $required) {
     if (-not (Test-Path (Join-Path $package $file))) { throw "Missing package member: $file" }
 }
