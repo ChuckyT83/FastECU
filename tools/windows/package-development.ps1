@@ -17,7 +17,13 @@ New-Item -ItemType Directory -Force $logs | Out-Null
 function Invoke-Logged {
     param([string]$Name,[string]$File,[string[]]$Arguments)
     & $File @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $logs "$Name.log")
-    if ($LASTEXITCODE -ne 0) { throw "$Name failed with exit $LASTEXITCODE; see $Name.log" }
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        # Retain the bounded tool tail even when a diagnostic does not contain
+        # the word 'error' (for example, a Perl platform/path mismatch).
+        $tail = (Get-Content (Join-Path $logs "$Name.log") | Select-Object -Last 12) -join "`n"
+        throw "$Name failed with exit $code; see $Name.log`n$tail"
+    }
 }
 # Refuse an unreviewed dependency revision. Never download vendor J2534 DLLs.
 $sslRevision = (& git -C $sslSource rev-parse HEAD).Trim()
@@ -31,6 +37,7 @@ if (-not (Test-Path (Join-Path $mingw 'g++.exe'))) { throw 'Qt 5.15.2 x64 MinGW 
 $env:PATH = "$mingw;$env:PATH"
 Invoke-Logged 'qmake-version' 'qmake.exe' @('-v')
 Invoke-Logged 'compiler-version' 'g++.exe' @('--version')
+Invoke-Logged 'perl-platform' 'perl.exe' @('-V:osname', '-V:archname')
 $sslPrefix = Join-Path $build 'openssl'
 $sslBuild = Join-Path $build 'openssl-build'
 New-Item -ItemType Directory -Force $sslBuild | Out-Null
