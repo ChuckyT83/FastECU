@@ -48,7 +48,16 @@ jobs:
           cache: false
       - name: Build and package the complete gated application
         shell: pwsh
-        run: ./tools/windows/package-development.ps1 -OpenSslSource .deps/openssl-source -BuildDirectory build-windows-development
+        run: |
+          try {
+            ./tools/windows/package-development.ps1 -OpenSslSource .deps/openssl-source -BuildDirectory build-windows-development
+          } catch {
+            $message = $_.Exception.Message + " at " + $_.InvocationInfo.PositionMessage
+            if ($message.Length -gt 3000) { $message = $message.Substring(0, 3000) }
+            $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Full application build failure::$message"
+            throw
+          }
       - name: Report installer failures
         if: failure()
         shell: pwsh
@@ -58,6 +67,14 @@ jobs:
             if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
             $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Output "::notice title=Qt installer diagnostics::$tail"
+          }
+          Get-ChildItem build-windows-development/logs/*.log -ErrorAction SilentlyContinue | ForEach-Object {
+            $tail = (Get-Content $_.FullName | Select-String '(?i)error|fatal|failed|undefined reference' | Select-Object -Last 8) -join "`n"
+            if ($tail) {
+              if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+              $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::notice title=$($_.Name)::$tail"
+            }
           }
       - name: Retain full build and package evidence
         if: always()
