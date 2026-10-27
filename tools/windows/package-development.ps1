@@ -37,18 +37,18 @@ if (-not (Test-Path (Join-Path $mingw 'g++.exe'))) { throw 'Qt 5.15.2 x64 MinGW 
 $env:PATH = "$mingw;$env:PATH"
 Invoke-Logged 'qmake-version' 'qmake.exe' @('-v')
 Invoke-Logged 'compiler-version' 'g++.exe' @('--version')
-Invoke-Logged 'perl-platform' 'perl.exe' @('-V:osname', '-V:archname')
 $sslPrefix = Join-Path $build 'openssl'
 $sslBuild = Join-Path $build 'openssl-build'
 New-Item -ItemType Directory -Force $sslBuild | Out-Null
-Push-Location $sslBuild
-try {
-    # Static crypto for the application's own crypto routines. No private or
-    # third-party prebuilt DLLs. Qt's independent TLS runtime remains unqualified.
-    Invoke-Logged 'openssl-configure' 'perl.exe' @((Join-Path $sslSource 'Configure'), 'mingw64', 'no-shared', 'no-tests', 'no-asm', '--libdir=lib', "--prefix=$sslPrefix")
-    Invoke-Logged 'openssl-build' 'mingw32-make.exe' @('-j2')
-    Invoke-Logged 'openssl-install' 'mingw32-make.exe' @('install_sw')
-} finally { Pop-Location }
+# OpenSSL's MinGW target requires Unix-path Perl/make, not native Windows Perl.
+# Use the runner's MSYS2 build tools, but retain Qt's exact native x64 compiler.
+$msysBin = 'C:/msys64/usr/bin'
+foreach ($tool in @('bash.exe', 'perl.exe', 'make.exe', 'cygpath.exe')) {
+    if (-not (Test-Path (Join-Path $msysBin $tool))) { throw "MSYS2 build tool required: $msysBin/$tool" }
+}
+$opensslScript = (Join-Path $PSScriptRoot 'build-openssl-mingw.sh').Replace('\', '/')
+Invoke-Logged 'openssl-build' (Join-Path $msysBin 'bash.exe') @('--noprofile', '--norc', $opensslScript,
+    $mingw.Replace('\', '/'), $sslSource.Replace('\', '/'), $sslBuild.Replace('\', '/'), $sslPrefix.Replace('\', '/'))
 $appBuild = Join-Path $build 'application'
 New-Item -ItemType Directory -Force $appBuild | Out-Null
 Push-Location $appBuild

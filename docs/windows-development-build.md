@@ -22,7 +22,11 @@ checkout/Qt/Python/artifact actions and official OpenSSL 3.5.5 source at
 then the full application, deploys Qt/compiler runtimes with `windeployqt`, and
 runs the packaged executable's `--help` after removing SDK paths. `qt.conf` fixes
 plugin lookup to the package. The script requires native Windows and PowerShell
-7.2+. A matching Qt toolchain and Perl must already be available.
+7.2+. A matching Qt toolchain and MSYS2 at `C:/msys64`, including its Perl and
+GNU make, must already be available. OpenSSL's official MinGW procedure requires
+Unix-path Perl; native Windows Perl fails its platform check. MSYS2 is used only
+to build static crypto with Qt's matching native compiler, not as an application
+runtime dependency.
 
 ```powershell
 ./tools/windows/package-development.ps1 -OpenSslSource C:/deps/openssl-source `
