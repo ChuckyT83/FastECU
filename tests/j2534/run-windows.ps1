@@ -17,10 +17,17 @@ function Invoke-Logged {
     if ($code -ne $ExpectedExitCode) {
         # Compiler/test output contains no credentials. Keep the diagnostic tail
         # in a public annotation as well as the downloadable artifact.
-        $content = Get-Content (Join-Path $logs "$Name.log")
+        $content = @()
+        $consoleLog = Join-Path $logs "$Name.log"
+        if (Test-Path $consoleLog) { $content += Get-Content $consoleLog }
+        # QtTest may write its explicit result file without console output.
+        # Do not mask the test failure with a missing Tee-Object log exception.
+        $resultLog = Join-Path $logs ($Name -replace '-tests$', '-results.txt')
+        if (Test-Path $resultLog) { $content += Get-Content $resultLog }
+        if (-not $content) { $content = @("No captured output; child exit code $code") }
         $context = $content | Where-Object { $_.Length -lt 500 -and $_ -match '(?i)PASS|INFO.*entering|Safety harness phase' } | Select-Object -Last 6
         $stack = $content | Where-Object { $_.Length -lt 500 -and $_ -match '^#' } | Select-Object -First 12
-        $errors = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception' } | Select-Object -Last 6
+        $errors = $content | Where-Object { $_.Length -lt 1000 -and $_ -match '(?i)error|fatal|FAIL!|Totals:|exception|Actual|Expected|failure location|Loc:' } | Select-Object -Last 8
         $diagnostics = @($context; $stack; $errors)
         if (-not $diagnostics) { $diagnostics = $content | Where-Object { $_.Length -lt 500 } | Select-Object -Last 12 }
         $tail = $Name + "`n" + ($diagnostics -join "`n")

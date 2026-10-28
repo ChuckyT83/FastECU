@@ -161,7 +161,13 @@ private slots:
         else if(fault=="capture-mutated"||fault=="target-mutated"){QVERIFY(!r.sectorsKnown);QCOMPARE(r.readiness.state,ReadinessState::InvalidComparison);}
         else {QVERIFY(r.sectorsKnown);
             if(fault=="protected-changes"){QCOMPARE(r.requiredSectors,QVector<unsigned>({2,15}));QCOMPARE(r.readiness.state,ReadinessState::ProtectedChangesUnsupported);QCOMPARE(r.hardware.state,HardwareState::Compatible);QCOMPARE(r.integrity.state,IntegrityState::Valid);}
-            else {QCOMPARE(r.readiness.state,ReadinessState::ProgrammingDisabled);QCOMPARE(r.requiredSectors,fault=="no-changes"?QVector<unsigned>():QVector<unsigned>({14}));}
+            else {
+                QCOMPARE(int(r.readiness.state),int(ReadinessState::ProgrammingDisabled));
+                // Explicit count/index assertions avoid one-element container
+                // constructor ambiguity and retain useful older-Qt diagnostics.
+                QCOMPARE(r.requiredSectors.size(),fault=="no-changes"?0:1);
+                if(fault!="no-changes")QCOMPARE(r.requiredSectors.at(0),14u);
+            }
             if(fault=="protected-changes"){r.recordFileRecheck({});QVERIFY(!r.sectorsKnown);QVERIFY(r.requiredSectors.isEmpty());}
         }
         QCOMPARE(b,before);QCOMPARE(current.bytes,oldCapture);QVERIFY(!r.programmingAllowed());QVERIFY(!r.json()["programming_allowed"].toBool());
