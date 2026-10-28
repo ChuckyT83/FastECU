@@ -12,7 +12,7 @@ $required = @('FastECU.exe', 'qt.conf', 'platforms/qwindows.dll',
     'Qt5SerialPort.dll', 'Qt5RemoteObjects.dll', 'Qt5WebSockets.dll',
     'config/fastecu.cfg', 'config/menu.cfg', 'config/protocols.cfg', 'config/logger.cfg',
     'collect-adapter-diagnostics.ps1', 'adapter-arrival-checklist.md',
-    'j2534-diagnostic-command-reference.md', 'adapter-diagnostics-troubleshooting.md',
+    'j2534-diagnostic-command-reference.md', 'adapter-diagnostics-troubleshooting.md', 'sh7058-identification-preflight.md',
     'LICENSE', 'third-party-licenses', 'diagnostics/x64/fastecu-j2534-diagnostics.exe')
 # qmake's Charts SDK declaration does not imply an imported Charts runtime:
 # the application currently has no QChart symbols. Check the real PE imports.

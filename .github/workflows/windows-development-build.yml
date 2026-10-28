@@ -156,7 +156,7 @@ jobs:
             'x86 toolkit not included in this archive; consult its independent job/artifact. x64 remains usable.' | Set-Content "$package/X86-TOOLKIT-STATUS.txt"
           }
           Copy-Item tools/windows/collect-adapter-diagnostics.ps1 $package
-          Copy-Item docs/adapter-arrival-checklist.md,docs/j2534-diagnostic-command-reference.md,docs/adapter-diagnostics-troubleshooting.md $package
+          Copy-Item docs/adapter-arrival-checklist.md,docs/j2534-diagnostic-command-reference.md,docs/adapter-diagnostics-troubleshooting.md,docs/sh7058-identification-preflight.md $package
           Get-ChildItem $package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 500 | Set-Content build-windows-development/logs/package-sha256.txt
       - name: Validate complete relocated native GUI package
         shell: pwsh

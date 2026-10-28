@@ -117,6 +117,16 @@ present USB metadata (serial/instance suffixes remain redacted):
   review. Do not share raw vendor software/private worker files indiscriminately.
   `--include-private-details` is an explicit disclosure decision.
 
+## SH7058 identification and BIN preparation
+
+The separate **SH7058 preflight** menu actions **ECU identification (live
+unavailable)** and **BIN/XML compatibility (offline)** do not open an adapter. The latter reports
+exact BIN/hash/checksum/XML inheritance/kernel evidence; without an observed ECU
+it cannot declare ECU compatibility. SH7058 ROM Read is blocked before device
+setup because its historical path enters programming-related sessions. See
+[the identification/preflight procedure](sh7058-identification-preflight.md).
+No ECU interaction is authorized by an offline result.
+
 ## Stage B requires separate review and approval
 
 Do **not** proceed merely because a DLL is present, signed, or opens in a mock

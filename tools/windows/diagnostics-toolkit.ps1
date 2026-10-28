@@ -91,7 +91,7 @@ foreach($candidate in @((Join-Path $compiler '../share/licenses'),(Join-Path $co
     if(Test-Path $candidate){Copy-Item $candidate $notices -Recurse -Force}
 }
 Copy-Item (Join-Path $source 'docs/diagnostic-runtime-notices.md') $notices
-foreach($document in @('adapter-arrival-checklist.md','j2534-diagnostic-command-reference.md','adapter-diagnostics-troubleshooting.md')) {
+foreach($document in @('adapter-arrival-checklist.md','j2534-diagnostic-command-reference.md','adapter-diagnostics-troubleshooting.md','sh7058-identification-preflight.md')) {
     Copy-Item (Join-Path $source "docs/$document") $package
 }
 Copy-Item (Join-Path $PSScriptRoot 'collect-adapter-diagnostics.ps1') $package
