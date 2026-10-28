@@ -1,12 +1,13 @@
 #include "modules/ecu/subaru_sh7058_preflight.h"
-#include "serial_port/sh7058_identification_session.h"
-#include "serial_port/j2534_registry.h"
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "serial_port_actions.h"
+// Legacy transport status macros must follow the GUI enum declarations.
+#include "serial_port/sh7058_identification_session.h"
+#include "serial_port/j2534_registry.h"
 
 void MainWindow::menu_action_triggered(QString action)
 {

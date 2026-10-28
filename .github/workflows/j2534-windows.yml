@@ -15,6 +15,7 @@ on:
       - 'modules/checksum/checksum_ecu_subaru_denso_sh7xxx.*'
       - 'file_actions.*'
       - 'mainwindow.cpp'
+      - 'menu_actions.cpp'
       - 'ecu_operations.ui'
       - 'kernelmemorymodels.h'
       - 'kernelcomms.h'
