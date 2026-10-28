@@ -4,6 +4,7 @@
 #include "../../serial_port/communication_result.h"
 #include <QMap>
 #include <QJsonObject>
+#include <QUuid>
 #include <atomic>
 namespace SubaruSH7058 {
 // Candidate application requests from historical FastECU; ordinary-state target
@@ -13,6 +14,7 @@ struct Identification {
     QByteArray ecuReply, calibrationReply;
     enum class Source { Missing, OfflineReplay, ObservedDiagnostic } source = Source::Missing;
     quint64 generation = 0;
+    QUuid observationContext; // Unique completed observation, not programming authority.
 };
 QByteArray identityRequest(bool calibration);
 bool parseIdentityReply(bool calibration, const QByteArray &frame, QString &identifier, QString &error);
@@ -55,14 +57,18 @@ struct Definition {
     QString error, xmlId;
     QStringList ancestry, documentHashes;
     QMap<QString,QString> fields;
+    QMap<QString,QByteArray> documentHashByXmlId;
 };
 // Parse only identity metadata, not calibration tables. XML bytes remain private.
 // Resolve actual included parent definitions; never equate a parent ID to a child.
 Definition resolveDefinition(const QVector<QByteArray> &documents, const QString &selectedXmlId);
-struct Target {
-    QString ecu = "A62A907107", calibration = "ZE5T201V_DM24000", parent = "AE5T201V";
-    QString obdCalibration = "ZE5T201V";
-    QByteArray imageHash = QByteArray::fromHex("15102939df167a4d76be9f33c20966fa4f707bb171aff846c7117108cc9c875c");
+// Compiled review references, not user XML/configuration or a force-compatibility
+// option. The optional dependency is used by synthetic unit fixtures; the GUI
+// always uses the pinned public Alpha definition and bundled kernel below.
+// Public EcuFlash standard AE5T201V.xml at TD-D/SubaruDefs Alpha
+// 0b0c0c42acea0d89ffd8b50378ae13ae32b5b43d (Task 006N evidence).
+struct ReviewedReferences {
+    QByteArray stockDefinitionHash = QByteArray::fromHex("432328ab094160180fa0f4cffebc9528dd4a4dd432fe6d2634d4f6d69694e33a");
     QByteArray kernelHash = QByteArray::fromHex("5fb9cb8973c6a3746e0e6a3afa328e9db57c66dd8d227ab3872cd2f80946b82e");
 };
 struct Configuration {
@@ -70,19 +76,44 @@ struct Configuration {
     const flashdev_t *map = nullptr;
     uint32_t kernelAddress = 0;
 };
-struct Compatibility {
-    enum class State { CompatibleEvidence, Incompatible, MissingEvidence, Unsupported, HardwareQualificationRequired };
-    State state = State::MissingEvidence;
-    QByteArray originalHash, finalHash;
+// No GUI/CLI producer exists. A future qualified capture must retain original
+// bytes/hash and its actual observation generation. An offline reference is not
+// evidence of what is currently in an ECU. This never authorizes programming.
+struct CurrentImageEvidence {
+    enum class Source { Unavailable, OfflineReference, QualifiedEcuCapture };
+    Source source = Source::Unavailable;
+    QByteArray bytes, capturedHash;
+    quint64 observationGeneration = 0;
+    QUuid observationContext;
+};
+enum class HardwareState { Compatible, Incompatible, InsufficientEvidence };
+enum class IntegrityState { Valid, Invalid, Incomplete, Unsupported };
+enum class TransitionState { SameComparableIdentity, DifferentComparableIdentity, PartiallyKnown, Unknown };
+enum class ReadinessState { SectorRequirementsUnknown, ProtectedChangesUnsupported, ProgrammingDisabled, InvalidComparison };
+template<class State> struct Assessment {
+    explicit Assessment(State initial):state(initial) {}
+    State state;
     QStringList reasons;
     QJsonObject evidence;
-    bool checksumCorrectionRequired = false;
+};
+struct Compatibility {
+    Assessment<HardwareState> hardware{HardwareState::InsufficientEvidence};
+    Assessment<IntegrityState> integrity{IntegrityState::Valid};
+    Assessment<TransitionState> transition{TransitionState::Unknown};
+    Assessment<ReadinessState> readiness{ReadinessState::SectorRequirementsUnknown};
+    QByteArray originalHash, finalHash;
+    QJsonObject identifiers;
+    QVector<unsigned> requiredSectors;
+    bool sectorsKnown = false, checksumCorrectionRequired = false;
     bool programmingAllowed() const { return false; }
+    void recordFileRecheck(const QByteArray &hash); // Empty hash means unreadable.
+    QString summary() const;
     QJsonObject json() const;
 };
 Compatibility checkCompatibility(const QByteArray &image, const QByteArray &originalHash,
     const QByteArray &kernel, const Definition &, const Configuration &, const Identification &,
-    const Target &target = Target());
+    const ReviewedReferences &references = ReviewedReferences(),
+    const CurrentImageEvidence &current = CurrentImageEvidence());
 // No admission token exists for the historical programming-related ROM Read.
 inline bool legacyReadAdmitted() { return false; }
 }

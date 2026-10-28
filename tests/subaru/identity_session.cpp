@@ -31,7 +31,7 @@ private slots:
         queue();SH7058IdentificationSession session(path);std::atomic<bool> cancel{false};
         const auto r=identify(session,cancel,2000);
         QVERIFY2(r.complete,qPrintable(r.detail));QVERIFY(r.cleanupConfirmed);QCOMPARE(r.identity.source,Identification::Source::ObservedDiagnostic);
-        QCOMPARE(r.identity.ecu,QString("A62A907107"));QCOMPARE(r.identity.calibration,QString("ZE5T201V"));QVERIFY(r.identity.firmware.isEmpty());
+        QCOMPARE(r.identity.ecu,QString("A62A907107"));QCOMPARE(r.identity.calibration,QString("ZE5T201V"));QVERIFY(r.identity.firmware.isEmpty());QVERIFY(!r.identity.observationContext.isNull());
         QCOMPARE(value(0),2UL);QCOMPARE(value(5),0UL);QCOMPARE(value(2),0UL); // No voltage or periodic operation.
         QByteArray last;for(unsigned long i=0;i<value(7);++i)last+=char(byte(int(i)));QCOMPARE(last,identityRequest(true));
         QCOMPARE(QString::fromLatin1(trace()).count("disconnect:99;close:41;"),1);QCOMPARE(session.generation(),quint64(0));QVERIFY(!session.acquire());

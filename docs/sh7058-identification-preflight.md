@@ -92,57 +92,97 @@ smoke, remote or trace options. The packaged tests verify refusal before device
 access when authorization is absent and when modes are mixed. Standalone Stage
 A/B device-only diagnostic packages retain their narrower capabilities.
 
-## Strict BIN/XML compatibility
+## Firmware-transition compatibility (Task 006Q)
 
-**BIN/XML compatibility (offline)** reads the original 1 MiB image, selected child
-and actual parent XML documents, and selected kernel. It reports compatible
-available evidence, confirmed incompatible, missing evidence, unsupported
-configuration or further hardware qualification. `programmingAllowed()` is
-always false, even for a complete match. It checks:
+**BIN/XML compatibility (offline)** reports four independent assessments in one
+readable dialog. Expand Details for complete JSON, reasons and provenance. No
+confirmation overrides a result and no action programs an ECU.
 
-- Exact original/current/reference SHA-256 and 1,048,576-byte size; no filename,
-  padding, truncation, substitution or automatic correction.
-- Exact `sub_ecu_denso_sh7058_can`, ISO15765, SH7058, existing 16-sector map,
-  enabled checksum, and RAM kernel address 0xFFFF3000.
-- Production checksum evaluated on a copy must return Valid without mutation.
-  Disabled tables are unsupported; a proposed correction is reported for separate
-  review, never applied to the tuner's original.
-- Exact child XML ID/full internal ID **ZE5T201V_DM24000**, full string at the
-  XML's explicit address **0x2004**, ECU A62A907107, SH7058, `subarucan`,
-  `subarudbw`, size and actual AE5T201V ancestry. RomRaider `base` and one
-  EcuFlash `include` are supported; missing/cyclic/duplicate/ambiguous definitions
-  and DTD/entities are rejected. Parent and child are not firmware aliases.
+| Assessment | Results and scope |
+|---|---|
+| Hardware compatibility | Compatible with reviewed family, incompatible, or insufficient evidence. ROM-reported ECU identity is observed historically; physical MCU/layout are derived from the reviewed family, not independently measured. |
+| Target BIN integrity | Valid, invalid, incomplete, or unsupported, independently of the installed firmware identifier. |
+| Firmware transition | Same comparable identity, different comparable identity, partially known, or unknown. Source and target identifiers retain their types. |
+| Flash-operation readiness | Sector requirements unknown, protected changes unsupported, programming disabled, or invalid comparison. Every result denies programming admission. |
+
+The model recognizes stock-to-DimeMod, DimeMod-to-stock and updated tuner
+identifiers within a reviewed family. A different identifier/hash is not itself
+hardware incompatibility. No prefix/parent equivalence is inferred between
+ZE5T201V, ZE5T201V_DM24000 and AE5T201V. The eight-character OBD response does
+not prove the installed full custom variant or byte-identical calibration.
+Missing full installed identity does not invalidate a separately verified target.
+The target OBD CAL-ID is established only for the actually reviewed original
+Base.bin; new targets do not inherit it by truncating their custom identifiers.
+
+Target integrity requires:
+
+- Exactly 1,048,576 bytes and unchanged original/current/file-recheck SHA-256.
+  The historical Base.bin SHA remains informational, not a universal allowlist.
+  A new valid target SHA is permitted. The GUI reopens the selected path to catch
+  replacement as well as mutation; unreadable/changed targets fail.
+- Exact supported sub_ecu_denso_sh7058_can/ISO15765/SH7058 configuration, unchanged
+  physical 16-sector geometry, enabled checksum and RAM kernel address 0xFFFF3000.
+- Production checksum evaluation on a copy returning Valid without mutation.
+  Disabled/unsupported tables and proposed corrections fail appropriately; no
+  correction, padding, truncation, identifier rewrite or image substitution.
+- Complete selected XML metadata and actual inheritance, with the selected
+  target's exact internal identifier at its own declared address. Stock may be
+  the leaf; custom/tuner children may have different full identifiers. Missing,
+  ambiguous/cyclic/duplicate definitions and DTD/entities remain rejected.
 - Kernel SHA
   `5fb9cb8973c6a3746e0e6a3afa328e9db57c66dd8d227ab3872cd2f80946b82e`.
-- Observed ECU **A62A907107**, raw OBD CAL-ID **ZE5T201V**, and independently
-  established full custom firmware variant **ZE5T201V_DM24000**. The last field
-  is unavailable from these two requests. An otherwise matching observation
-  therefore remains missing full-variant evidence. Offline replay never becomes
-  a physical observation. Earlier GUI observations are labelled historical,
-  not proof of the currently connected ECU.
 
-The supplied real BIN passed production checksum with identical before/after
-SHA. The supplied child XML matches its full ID at 0x2004 and exact leaf metadata.
-The owner supplied the child and directed lookup to TD-D/SubaruDefs **Alpha**.
-At pinned commit `0b0c0c42acea0d89ffd8b50378ae13ae32b5b43d`, the public EcuFlash
-standard `AE5T201V.xml` and `Bases/32BITBASE.xml` resolve the complete chain
-**ZE5T201V_DM24000 → AE5T201V → 32BITBASE**. The production preflight passed
-hash, checksum, explicit full-ID and inherited metadata checks on these actual
-files; it still reports missing observed ECU identity, not ECU compatibility.
-Use the child plus both parent files in the offline GUI selector. No private
-BIN, XML or calibration tables are committed/exported.
+Independent family association currently covers the reviewed 2016 USDM STI
+A62A907107/AE5T201V SH7058 layout. It requires the actual reviewed public Alpha
+AE5T201V document fingerprint
+`432328ab094160180fa0f4cffebc9528dd4a4dd432fe6d2634d4f6d69694e33a`,
+as stock leaf or real ancestor, and matching ROM ECU-ID bytes at 0xE10F0 derived
+from the reviewed Base.bin AA pointer table. Matching size, checksum, XML claims
+or identifier prefixes alone cannot establish this association. Other target
+layouts/documents remain unresolved pending specific evidence, not silently
+accepted or classified as incompatible merely because a label changed.
+The production references are compiled defaults; there is no GUI/CLI/custom
+profile override. Synthetic tests inject their own review fingerprints into the
+pure evaluator, never into the application or programming gate.
 
-SH7058 ROM Read is rejected before MainWindow's reset/voltage/transport prelude,
-and again at module run() entry. Its implementation remains for future
-qualification. Unknown command strings, write and test-write remain blocked.
-Other ECU families are unchanged.
+The reviewed stock XML omits filesize. Its 1 MiB requirement is explicitly derived
+from the anchored SH7058 family; an unreviewed definition without size evidence
+remains incomplete. Configured, definition-supplied, firmware-derived and observed
+facts are separately labelled in the JSON. Hardware compatibility means matching
+reviewed family evidence, not physical flashing qualification or authentication
+of all target code. Historical observations never prove the current connection.
+
+The owner reference remains byte-identical at SHA
+`15102939df167a4d76be9f33c20966fa4f707bb171aff846c7117108cc9c875c`.
+Use its private child XML plus public AE5T201V.xml and Bases/32BITBASE.xml from
+TD-D/SubaruDefs Alpha commit
+`0b0c0c42acea0d89ffd8b50378ae13ae32b5b43d`.
+Chain: ZE5T201V_DM24000 → AE5T201V → 32BITBASE. No private firmware or XML tables
+are distributed. Other stock/custom transition examples are synthetic tests,
+not validation of stock or updated tuner binaries which were not supplied.
+
+No current-image acquisition was added. The GUI therefore reports sector
+requirements unknown. The pure evaluator can record a complete read-only byte
+comparison only when given a qualified current-image capture with original hash
+and the same unique observation context and generation. An offline reference or stale context/generation is
+insufficient. No production producer for that capture exists in this task.
+All 16 differences are reported, never filtered into an erase plan. Changes in
+sectors 0..8 or 15 are unsupported under the 006N preservation review proposal;
+other differences or no changes still give no programming admission. This adds
+no erase/sector-selection policy or partial-programming success path.
+
+SH7058 ROM Read remains rejected before the MainWindow reset/voltage/transport
+prelude and at module run() entry. Upload, write, test-write, unknown legacy
+commands, live candidate and voltage admission remain disabled. Other ECU
+families, identity worker and device-only diagnostic toolkits are unchanged.
 
 ## Shortest later RAM-only qualification — NOT authorization
 
 1. Complete reviewed USB-only OBDX Open/ReadVersion/Close (exact official DLL,
    API, firmware, timing/cleanup) and then a separately authorized AA/09-04 trial.
-   Use the pinned complete definition chain and obtain full custom-variant binding without assuming
-   that short CAL-ID proves DM24000. Keep clone activity outside this plan.
+   Use the complete definition chain, record installed and target identities
+   separately, and review transition uncertainty and applicable entry behavior.
+   Do not treat the short CAL-ID as the full DM24000 label. Clone excluded.
 2. Use a separately reviewed vehicle/supply setup and measured stable supply.
    Kernel response 0x02300230 is constant, not measurement. J2534 voltage never
    authorizes programming. No spare ECU or access to a proprietary developer is

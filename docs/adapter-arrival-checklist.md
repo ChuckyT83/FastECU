@@ -120,7 +120,11 @@ present USB metadata (serial/instance suffixes remain redacted):
 ## SH7058 identification and BIN preparation
 
 **SH7058 preflight → BIN/XML compatibility (offline)** never opens an adapter.
-It reports exact BIN/hash/checksum/XML/kernel evidence and preserves all bytes.
+It preserves all bytes and reports hardware-family evidence, target integrity,
+firmware transition and flash-operation readiness independently. A changed
+identifier or target SHA is not an automatic hardware rejection. Missing full
+installed identity does not invalidate an independently checked target. Without
+a qualified current-image comparison, required sectors remain unknown.
 **Read ECU identity (AA/CAL-ID)** is a separate ACTIVE ECU operation using only
 the firmware-reviewed AA/09-04 requests. It requires reviewed official OBDX
 hash/API, prior USB-only Stage B validation and separate physical-test approval.

@@ -104,6 +104,7 @@ int runSH7058IdentificationWorker(const QCommandLineParser &p) {
     const auto cleanup=session.cleanup();
     report["ok"]=result.complete;report["ecu_id"]=result.identity.ecu;report["obd_calibration_id"]=result.identity.calibration;
     report["full_firmware_id"]=QString();report["generation"]=QString::number(result.identity.generation);
+    report["observation_context"]=result.identity.observationContext.isNull()?QString():result.identity.observationContext.toString(QUuid::WithoutBraces);
     report["backend_errors"]=QJsonArray::fromStringList(session.errors());
     report["cleanup_confirmed"]=result.cleanupConfirmed;report["disconnect_attempted"]=cleanup.disconnectAttempted;
     report["disconnect_status"]=qint64(cleanup.disconnectStatus);report["close_attempted"]=cleanup.closeAttempted;report["close_status"]=qint64(cleanup.closeStatus);

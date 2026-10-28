@@ -69,3 +69,10 @@ Fixtures are synthetic; no private XML/BIN or physical J2534 provider is linked.
 Build/run like safety.pro with Qt Widgets/XML/Test. The native Windows runner
 includes this target and publishes its exact QtTest total. Passing a fixture is
 not ordinary-session firmware evidence or live identification permission.
+
+Task 006Q extends this same target with independent hardware-family, target-integrity,
+transition and operation-readiness assertions. Stock/custom transition images and
+qualified-capture scenarios are synthetic. Production family association requires
+the reviewed public definition fingerprint and ROM ECU-ID layout evidence; fixture
+fingerprints are injected only by unit callers. No GUI/CLI force option exists.
+All results retain disabled programming admission and immutable inputs.

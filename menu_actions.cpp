@@ -93,6 +93,7 @@ void MainWindow::menu_action_triggered(QString action)
         QFile input(bin);
         if (!input.open(QIODevice::ReadOnly) || input.size()!=1048576) { QMessageBox::warning(this,tr("Preflight"),tr("Cannot read an exact 1 MiB BIN. No bytes changed.")); return; }
         const auto image=input.readAll(); const auto original=SubaruSH7058Safety::fingerprint(image);
+        input.close();
         const auto files=QFileDialog::getOpenFileNames(this,tr("Select XML including every inherited parent"),QString(),tr("XML (*.xml)"));
         if (files.isEmpty()) return;
         QVector<QByteArray> documents;
@@ -121,14 +122,17 @@ void MainWindow::menu_action_triggered(QString action)
         const auto last=qApp->property("sh7058LastIdentity").toJsonObject();
         if (last["ok"].toBool() && last["cleanup_confirmed"].toBool()) {
             observation.ecu=last["ecu_id"].toString();observation.calibration=last["obd_calibration_id"].toString();
+            observation.firmware=last["full_firmware_id"].toString();
+            observation.observationContext=QUuid(last["observation_context"].toString());
             observation.source=Identification::Source::ObservedDiagnostic;observation.generation=last["generation"].toString().toULongLong();
         }
         auto result=checkCompatibility(image,original,kernelBytes,definition,config,observation);
-        input.seek(0);
-        const auto diskHash=SubaruSH7058Safety::fingerprint(input.readAll());
-        if (diskHash!=original) {
-            result.state=Compatibility::State::Incompatible;result.reasons.append("BIN changed on disk during preflight; reload required");
-        }
+        // Reopen by path: a replacement file must not evade rechecking through
+        // the old open handle. All target operations remain read-only.
+        QFile current(bin);QByteArray diskHash;
+        if (current.open(QIODevice::ReadOnly) && current.size()==1048576)
+            diskHash=SubaruSH7058Safety::fingerprint(current.readAll());
+        result.recordFileRecheck(diskHash);
         auto report=result.json(); report["file_sha256_after"]=QString::fromLatin1(diskHash.toHex()); report["file_unchanged"]=diskHash==original;
         report["definition_xml_id"]=definition.xmlId;
         QJsonArray chain,hashes; for (const auto &v:definition.ancestry) chain.append(v);
@@ -137,8 +141,10 @@ void MainWindow::menu_action_triggered(QString action)
         report["ecu_observed"]=observation.source==Identification::Source::ObservedDiagnostic;
         report["observation_note"]="Earlier isolated observation only; not proof of the currently connected ECU or full custom firmware variant";
         report["observed_ecu_id"]=observation.ecu;report["observed_obd_calibration_id"]=observation.calibration;
+        report["observation_timestamp_utc"]=last["timestamp_utc"];
         QMessageBox box(this);box.setWindowTitle(tr("SH7058 offline compatibility — no programming admission"));
-        box.setText(QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Indented)));
+        box.setTextFormat(Qt::PlainText);box.setText(result.summary());
+        box.setDetailedText(QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Indented)));
         box.setTextInteractionFlags(Qt::TextSelectableByMouse);box.exec();
         return;
     }
