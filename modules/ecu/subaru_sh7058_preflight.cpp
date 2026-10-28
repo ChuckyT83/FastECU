@@ -16,9 +16,9 @@ bool parseIdentityReply(bool calibration, const QByteArray &frame, QString &id, 
     const auto body=frame.mid(4);
     if (uint8_t(body[0])==0x7f) { error="Negative/pending response; no automatic retry or session transition"; return false; }
     if (!calibration) {
-        // Existing FastECU's EA format places five ID bytes after EA + 3 bytes.
-        // Preserve the entire response; header/capability meaning remains unqualified.
-        if (body.size()<9 || body.size()>256 || uint8_t(body[0])!=0xea) { error="Malformed EA ECU-ID response"; return false; }
+        // Pinned Base: AA170 gathers 104 ROM bytes via EC8C8, preceded by EA.
+        // The first three bytes are A2 10 11; five ECU-ID bytes follow.
+        if (body.size()!=105 || body.left(4)!=QByteArray::fromHex("eaa21011")) { error="Malformed EA ECU-ID response"; return false; }
         id=QString::fromLatin1(body.mid(4,5).toHex().toUpper()); return true;
     }
     // One OBD service-09 PID-04 record, 16 bytes. Never select the first of
@@ -33,24 +33,31 @@ IdentificationResult identify(IdentificationLink &link, const std::atomic<bool> 
         uint16_t timeout, const IdentificationClock *clock) {
     IdentificationResult r;
     if (cancel.load()) { r.detail="Cancelled before acquisition"; return r; }
-    if (!link.offlineFixture() || !timeout) {
-        r.detail="Live SH7058 identification unavailable: ordinary-state request support/session effects lack target firmware evidence. No device acquired or request sent."; return r;
+    if ((!link.offlineFixture() && !link.isolatedDiagnostic()) || !timeout) {
+        r.detail="Live SH7058 identification unavailable: a reviewed isolated OBDX session is required. No device acquired or request sent."; return r;
     }
     QElapsedTimer timer; timer.start();
     const auto now=[&] { return clock ? clock->nowMs() : timer.elapsed(); };
+    const auto acquisitionBegan=now();
     try { r.acquired=link.acquire(); } catch (...) { r.detail="Acquisition failed; ownership unknown"; return r; }
     if (!r.acquired) { r.detail="Device/channel already owned or acquisition failed"; return r; }
     const auto epoch=link.generation();
-    auto owned=[&] { return epoch && link.offlineFixture() && link.generation()==epoch; };
+    auto owned=[&] { return epoch && (link.offlineFixture() || link.isolatedDiagnostic()) && link.generation()==epoch; };
     auto checked=[](const CommunicationResult &v) { return v.ok() && v.hasStatus && v.status==0; };
     try {
-        for (const bool cal:{false,true}) {
+        const auto acquiredAt=now();
+        if (acquiredAt<acquisitionBegan || acquiredAt-acquisitionBegan>=timeout) {
+            r.detail="Acquisition exceeded deadline; no ECU request sent";
+        } else for (const bool cal:{false,true}) {
             if (cancel.load() || !owned()) { r.detail="Cancelled or channel generation lost"; break; }
+            const auto began=now();
             r.transport=link.receive(0);
-            if (cancel.load() || !owned() || r.transport.state!=CommunicationResult::State::Timeout) { r.detail="Receive queue not empty or ownership lost; no request sent"; break; }
+            const auto queuedAt=now();
+            if (cancel.load() || !owned() || queuedAt<began || queuedAt-began>=timeout || r.transport.state!=CommunicationResult::State::Timeout) { r.detail="Receive queue not empty or ownership lost; no request sent"; break; }
             r.transport=link.submit(identityRequest(cal));
-            if (cancel.load() || !owned() || !checked(r.transport)) { r.detail="Submission failed/uncertain; no retry"; break; }
-            const auto began=now(); r.transport=link.receive(timeout); const auto ended=now();
+            const auto submitted=now();
+            if (cancel.load() || !owned() || submitted<began || submitted-began>=timeout || !checked(r.transport)) { r.detail="Submission failed/uncertain; no retry"; break; }
+            r.transport=link.receive(uint16_t(timeout-(submitted-began))); const auto ended=now();
             if (cancel.load() || !owned() || ended<began || ended-began>=timeout || !checked(r.transport)) { r.detail="Timeout, cancellation, transport failure or stale generation; no following request"; break; }
             QString id,error;
             if (!parseIdentityReply(cal,r.transport.bytes,id,error)) { r.detail=error; break; }
@@ -60,8 +67,9 @@ IdentificationResult identify(IdentificationLink &link, const std::atomic<bool> 
     } catch (...) { r.complete=false; r.detail="Transport callback failed; no retry/reset"; }
     r.cleanupConfirmed=link.release();
     if (!r.cleanupConfirmed) { r.complete=false; r.detail="Device/channel cleanup unconfirmed"; }
-    r.identity.source=Identification::Source::OfflineReplay; r.identity.generation=epoch;
-    if (r.complete) r.detail="Offline identification replay complete; not observed ECU identity or live authorization";
+    if (cancel.load()) { r.complete=false; r.detail="Cancelled; no retry or session transition"; }
+    r.identity.source=link.offlineFixture()?Identification::Source::OfflineReplay:Identification::Source::ObservedDiagnostic; r.identity.generation=epoch;
+    if (r.complete) r.detail=link.offlineFixture()?"Offline identification replay complete; not observed ECU identity or live authorization":"Read-only ECU/CAL-ID responses received; full custom firmware variant remains unobserved, no programming admission";
     return r;
 }
 Definition resolveDefinition(const QVector<QByteArray> &documents, const QString &selected) {
@@ -102,6 +110,7 @@ Definition resolveDefinition(const QVector<QByteArray> &documents, const QString
         for (auto i=n.fields.begin();i!=n.fields.end();++i) d.fields[i.key()]=i.value();
         return true;
     };
+    d.fields=nodes.value(selected).fields; // Retain leaf facts even when a parent is missing.
     d.valid=visit(selected); if (d.valid && d.documentHashes.isEmpty()) { d.valid=false; d.error="Definition evidence missing"; }
     return d;
 }
@@ -110,7 +119,7 @@ QJsonObject Compatibility::json() const {
     QJsonArray why; for (const auto &s:reasons) why.append(s);
     return {{"result",names[int(state)]},{"original_sha256",QString::fromLatin1(originalHash.toHex())},
         {"final_sha256",QString::fromLatin1(finalHash.toHex())},{"input_preserved",originalHash==finalHash},
-        {"checksum_correction_required",checksumCorrectionRequired},{"programming_allowed",false},{"reasons",why}};
+        {"evidence",evidence},{"checksum_correction_required",checksumCorrectionRequired},{"programming_allowed",false},{"reasons",why}};
 }
 Compatibility checkCompatibility(const QByteArray &image, const QByteArray &expectedOriginal,
         const QByteArray &kernel, const Definition &d, const Configuration &c, const Identification &observed, const Target &t) {
@@ -131,11 +140,14 @@ Compatibility checkCompatibility(const QByteArray &image, const QByteArray &expe
         return fail(State::Unsupported,"Checksum table disabled; validity not established");
     if (checksum.state!=ChecksumEcuSubaruDensoSH7xxx::State::Valid || !SubaruSH7058Safety::preservesInput(checksum,image))
         return fail(State::Incompatible,"Checksum invalid/disabled or correction proposed; original BIN retained for separate review");
-    if (!d.valid) return fail(State::MissingEvidence,"Definition/inheritance unresolved: "+d.error);
+    if ((!observed.ecu.isEmpty() && observed.ecu!=t.ecu) || (!observed.calibration.isEmpty() && observed.calibration!=t.obdCalibration) ||
+        (!observed.firmware.isEmpty() && observed.firmware!=t.calibration)) return fail(State::Incompatible,"Observed/replayed identifiers mismatch; no prefix or parent equivalence accepted");
+    r.evidence["checksum_valid_and_preserved"]=true;
+    r.evidence["xml_inheritance_resolved"]=d.valid;
     for (const auto &key:{"xmlid","internalidstring","internalidaddress","ecuid","memmodel","flashmethod","checksummodule","filesize"})
         if (d.fields.value(key).isEmpty()) return fail(State::MissingEvidence,QString("Missing XML identity field: ")+key);
     const auto f=d.fields;
-    if (d.ancestry.size()<2 || !d.ancestry.mid(1).contains(t.parent) || f["internalidstring"]!=t.calibration ||
+    if (d.xmlId!=t.calibration || f["xmlid"]!=t.calibration || (d.valid && (d.ancestry.size()<2 || !d.ancestry.mid(1).contains(t.parent))) || f["internalidstring"]!=t.calibration ||
         f["ecuid"]!=t.ecu || f["memmodel"]!="SH7058" || f["flashmethod"]!="subarucan" || f["checksummodule"]!="subarudbw" ||
         (f["filesize"]!="1048576" && f["filesize"].toUpper()!="1024KB"))
         return fail(State::Incompatible,"Exact XML identity/parent/MCU/flash method/checksum module/size mismatch; parent IDs are not firmware aliases");
@@ -143,10 +155,15 @@ Compatibility checkCompatibility(const QByteArray &image, const QByteArray &expe
     const auto offset=address.toULongLong(&ok,16); const auto id=t.calibration.toLatin1();
     if (!ok || offset>quint64(image.size()) || quint64(id.size())>quint64(image.size())-offset || image.mid(int(offset),id.size())!=id)
         return fail(State::Incompatible,"Full embedded BIN identifier does not match the XML's explicit address");
+    r.evidence["full_embedded_id_at_xml_address"]=true;
+    r.evidence["leaf_identity_metadata_match"]=true;
+    if (!d.valid) return fail(State::MissingEvidence,"Definition/inheritance unresolved: "+d.error);
     // Pinning the full image binds the XML-specified identifier to this reviewed
     // reference. No raw ECU-ID location is guessed from ASCII/hex searches.
-    if ((!observed.ecu.isEmpty() && observed.ecu!=t.ecu) || (!observed.calibration.isEmpty() && observed.calibration!=t.calibration)) return fail(State::Incompatible,"Observed/replayed identifiers mismatch; no prefix or parent equivalence accepted");
     if (observed.ecu.isEmpty() || observed.calibration.isEmpty()) return fail(State::MissingEvidence,"No complete observed ECU identity; offline BIN/XML match is not ECU compatibility");
+    r.evidence["ecu_and_obd_calibration_match"]=true;
+    if (observed.firmware.isEmpty()) return fail(State::MissingEvidence,"OBD CAL-ID matches the baseline only; full custom firmware variant was not observed. No parent/prefix equivalence inferred");
+    if (observed.firmware!=t.calibration) return fail(State::Incompatible,"Observed full firmware variant differs from the reference");
     if (observed.source!=Identification::Source::ObservedDiagnostic || !observed.generation)
         return fail(State::HardwareQualificationRequired,"Identity is inferred/offline replay, not a qualified live observation");
     return fail(State::CompatibleEvidence,"Exact available identity/BIN/XML/kernel evidence matches; hardware/kernel qualification and programming admission remain separate and disabled");

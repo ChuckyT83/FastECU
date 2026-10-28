@@ -78,6 +78,15 @@ try {
         Invoke-Logged -Name 'build-preflight' -File 'nmake.exe' -Arguments @('/NOLOGO')
         Invoke-Logged -Name 'preflight-tests' -File (Join-Path $preflightBuild 'subaru-preflight.exe') -Arguments @('-o', "$(Join-Path $logs 'preflight-results.txt'),txt", '-o', '-,txt')
     } finally { Pop-Location }
+    $identityBuild = Join-Path $build 'identity-session'
+    New-Item -ItemType Directory -Force $identityBuild | Out-Null
+    Copy-Item (Join-Path $build 'mock-j2534.dll') $identityBuild -Force
+    Push-Location $identityBuild
+    try {
+        Invoke-Logged -Name 'qmake-identity-session' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/identity_session.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-identity-session' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'identity-session-tests' -File (Join-Path $identityBuild 'sh7058-identity-session.exe') -Arguments @('-o', "$(Join-Path $logs 'identity-session-results.txt'),txt", '-o', '-,txt')
+    } finally { Pop-Location }
     $facadeBuild = Join-Path $build 'facade'
     New-Item -ItemType Directory -Force $facadeBuild | Out-Null
     Push-Location $facadeBuild
@@ -159,6 +168,7 @@ try {
         ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
         ('Subaru production safety and offline upload candidate: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
         ('Identification and strict BIN preflight: ' + ((Get-Content (Join-Path $logs 'preflight-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Isolated native identity session: ' + ((Get-Content (Join-Path $logs 'identity-session-results.txt') | Select-String 'Totals:') -join ' '))
         ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
         ('Synthetic kernel model: ' + ((Get-Content (Join-Path $logs 'kernel-offline-results.txt') | Select-String 'Totals:') -join ' '))
         ('Production upload candidate: ' + ((Get-Content (Join-Path $logs 'upload-candidate-results.txt') | Select-String 'Totals:') -join ' '))

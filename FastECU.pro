@@ -1,5 +1,5 @@
-SOURCES += modules/ecu/subaru_sh7058_preflight.cpp
-HEADERS += modules/ecu/subaru_sh7058_preflight.h
+SOURCES += modules/ecu/subaru_sh7058_preflight.cpp serial_port/sh7058_identification_session.cpp
+HEADERS += modules/ecu/subaru_sh7058_preflight.h serial_port/sh7058_identification_session.h
 HEADERS += gui_startup_smoke.h
 QT += core gui xml serialport remoteobjects websockets
 
@@ -29,7 +29,7 @@ win32 {
     LIBS += -L$$quote($$OPENSSL_PREFIX/lib)
     win32-g++: LIBS += -lcrypto
     win32-msvc: LIBS += libcrypto.lib
-    LIBS += -lopengl32 -lsetupapi -lws2_32 -lcrypt32 -lbcrypt
+    LIBS += -lopengl32 -lsetupapi -lws2_32 -lcrypt32 -lbcrypt -lwintrust -lversion -lcfgmgr32
     SOURCES += \
     serial_port/J2534_win.cpp
     HEADERS += \

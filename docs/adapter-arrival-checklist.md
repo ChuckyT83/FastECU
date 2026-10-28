@@ -119,11 +119,15 @@ present USB metadata (serial/instance suffixes remain redacted):
 
 ## SH7058 identification and BIN preparation
 
-The separate **SH7058 preflight** menu actions **ECU identification (live
-unavailable)** and **BIN/XML compatibility (offline)** do not open an adapter. The latter reports
-exact BIN/hash/checksum/XML inheritance/kernel evidence; without an observed ECU
-it cannot declare ECU compatibility. SH7058 ROM Read is blocked before device
-setup because its historical path enters programming-related sessions. See
+**SH7058 preflight → BIN/XML compatibility (offline)** never opens an adapter.
+It reports exact BIN/hash/checksum/XML/kernel evidence and preserves all bytes.
+**Read ECU identity (AA/CAL-ID)** is a separate ACTIVE ECU operation using only
+the firmware-reviewed AA/09-04 requests. It requires reviewed official OBDX
+hash/API, prior USB-only Stage B validation and separate physical-test approval.
+Do not run it during Stage A/B or use legacy ROM Read for identification.
+The returned short `ZE5T201V` CAL-ID does not prove the full custom `DM24000`
+variant. The Alpha parent chain is now located; full-variant live evidence stays incomplete. ROM Read,
+upload/write/test-write and the live candidate remain blocked. See
 [the identification/preflight procedure](sh7058-identification-preflight.md).
 No ECU interaction is authorized by an offline result.
 

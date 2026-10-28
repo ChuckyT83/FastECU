@@ -23,6 +23,7 @@ on:
       - 'serial_port/serial_port_actions.*'
       - 'serial_port/communication_result.h'
       - 'serial_port/sh7058_candidate_link.*'
+      - 'serial_port/sh7058_identification_session.*'
       - 'serial_port/j2534_*.h'
       - 'serial_port/j2534_*.inc'
       - 'tools/j2534_diagnostics/**'

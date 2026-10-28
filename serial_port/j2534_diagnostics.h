@@ -156,7 +156,7 @@ inline QJsonObject validateDevice(Driver driver,bool explicitRequest,bool vehicl
 }
 inline QJsonObject identificationPlan() {
     return {{"ok",false},{"validation_level","not_executed"},{"ecu_communication",false},
-        {"error","No approved target-applicable identification request; no adapter/channel opened"},
+        {"error","This device-only toolkit never performs ECU identification. Use the separately reviewed FastECU identity workflow only after physical-test approval; no adapter/channel opened"},
         {"programming_available",false},{"allowed_requests",QJsonArray()}};
 }
 }

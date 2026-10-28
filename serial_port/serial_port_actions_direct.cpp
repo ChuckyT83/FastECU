@@ -598,13 +598,23 @@ void SerialPortActionsDirect::close_serial_port()
 
 void SerialPortActionsDirect::close_j2534_serial_port()
 {
+    close_j2534_checked();
+}
+
+SerialPortActionsDirect::CleanupResult SerialPortActionsDirect::close_j2534_checked()
+{
+    CleanupResult result;
     voltageContext_ = QUuid::createUuid(); // retire observations even when cleanup fails
     // Resource ownership is independent of whether initialization completed.
     // Close each acquired resource once, in reverse order, even after an error.
-    if (J2534_connect_ok)
-        checkJ2534Status(PassThruDisconnect(chanID), "PassThruDisconnect");
-    if (J2534_open_ok)
-        checkJ2534Status(PassThruClose(devID), "PassThruClose");
+    if (J2534_connect_ok) {
+        result.disconnectAttempted=true; result.disconnectStatus=PassThruDisconnect(chanID);
+        checkJ2534Status(result.disconnectStatus, "PassThruDisconnect");
+    }
+    if (J2534_open_ok) {
+        result.closeAttempted=true; result.closeStatus=PassThruClose(devID);
+        checkJ2534Status(result.closeStatus, "PassThruClose");
+    }
 #if defined Q_OS_UNIX
     j2534->close_serial_port();
 #else
@@ -626,6 +636,9 @@ void SerialPortActionsDirect::close_j2534_serial_port()
     transportState = TransportState::Idle;
     transportStatus = STATUS_NOERROR;
     openedSerialPort.clear();
+    // Keep acquisition-failure cleanup evidence across later idempotent closes.
+    if (result.disconnectAttempted || result.closeAttempted) lastCleanup_=result;
+    return lastCleanup_;
 }
 
 QByteArray SerialPortActionsDirect::set_error()

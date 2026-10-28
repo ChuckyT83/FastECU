@@ -69,6 +69,14 @@ try {
         -not $r.hardware_opening_disabled -or $r.remote_enabled -or $r.platform -ne 'windows') {
         throw 'GUI did not establish native visible/responsive/closed state'
     }
+    # Refusal paths return before any driver enumeration/load/device call.
+    $refused = Join-Path $logs 'identity-refused.json'
+    Invoke-Smoke 'identity-no-authorization' @('--sh7058-identify', 'unreviewed', '--identity-output', "`"$refused`"") 2
+    $i = Get-Content $refused -Raw | ConvertFrom-Json
+    if ($i.ok -or $i.programming_allowed -or $i.detail -notlike '*no device opened*') { throw 'Identity authorization guard failed' }
+    $mixed = Join-Path $logs 'identity-mixed.json'
+    Invoke-Smoke 'identity-smoke-conflict' @('--gui-smoke-test', "`"$mixed`"", '--sh7058-identify', 'unreviewed') 2
+    if (Test-Path $mixed) { throw 'Mixed identity/smoke modes unexpectedly started' }
     # Missing defaults must fail explicitly, never silently pass via resources.
     $config = Join-Path $relocated 'config/protocols.cfg'
     Move-Item $config "$config.saved"
@@ -78,7 +86,7 @@ try {
         $n = Get-Content $negative -Raw | ConvertFrom-Json
         if ($n.ok -or $n.error -notlike '*Packaged config missing*') { throw 'Missing config did not fail as expected' }
     } finally { Move-Item "$config.saved" $config }
-    $summary = "Native packaged GUI: visible/exposed/painted; $($r.heartbeats) event-loop heartbeats; normal close and destruction passed. Relocated help and missing-config rejection passed. No device opening or remote connection."
+    $summary = "Native packaged GUI: visible/exposed/painted; $($r.heartbeats) event-loop heartbeats; normal close and destruction passed. Relocated help, missing-config rejection and identity authorization/mixed-mode refusals passed. No device opening or remote connection."
     $summary | Set-Content (Join-Path $logs 'gui-summary.txt')
     Write-Output "::notice title=Native packaged GUI results::$summary"
 } catch {

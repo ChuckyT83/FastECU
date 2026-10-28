@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include "gui_startup_smoke.h"
+#include "serial_port/sh7058_identification_session.h"
 
 int main(int argc, char *argv[])
 {
@@ -11,6 +12,7 @@ int main(int argc, char *argv[])
     QCommandLineParser cmdParser;
     cmdParser.setApplicationDescription("FastECU - software to work on and modify ECUs");
     cmdParser.addHelpOption();
+    addSH7058IdentificationOptions(cmdParser);
     cmdParser.addOption({"gui-smoke-test", "Show the real GUI with an isolated profile and hardware opening disabled, then close; write NEW result JSON", "file"});
     QCommandLineOption cmdHost(QStringList() << "s" << "host",
                                "Remote host address and port, for example 127.0.0.1:33314, local:33315",
@@ -63,6 +65,16 @@ int main(int argc, char *argv[])
         //Parser works only after QApplication initialization
         cmdParser.process(a);
 
+        const bool identityMode=cmdParser.isSet("sh7058-identify");
+        const bool identityOptions=identityMode || cmdParser.isSet("identity-driver-sha256") ||
+            cmdParser.isSet("reviewed-obdx-driver") || cmdParser.isSet("ecu-identification-authorized") || cmdParser.isSet("identity-output");
+        if (identityOptions) {
+            if (!identityMode || cmdParser.isSet("gui-smoke-test") || cmdParser.isSet(cmdHost) ||
+                cmdParser.isSet(cmdPassword) || cmdParser.isSet(cmdTrace)) {
+                qCritical("Identity worker refuses mixed GUI smoke/remote/trace or incomplete mode options"); return 2;
+            }
+            return runSH7058IdentificationWorker(cmdParser); // Never constructs MainWindow/background serial users.
+        }
         if (cmdParser.isSet("gui-smoke-test")) {
             if (cmdParser.isSet(cmdHost) || cmdParser.isSet(cmdPassword) || cmdParser.isSet(cmdTrace)) {
                 qCritical("GUI smoke refuses remote/trace options"); return 2;

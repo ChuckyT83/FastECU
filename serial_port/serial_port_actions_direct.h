@@ -162,6 +162,13 @@ public:
     void finish_j2534_trace() { trace.finish(); }
     bool j2534_trace_failed() const { return trace.failed(); }
 
+    struct CleanupResult {
+        bool disconnectAttempted=false, closeAttempted=false;
+        long disconnectStatus=0, closeStatus=0;
+        bool confirmed() const { return (!disconnectAttempted || disconnectStatus==0) && (!closeAttempted || closeStatus==0); }
+    };
+    CleanupResult close_j2534_checked();
+    CleanupResult last_cleanup() const { return lastCleanup_; }
     enum class TransportState { Idle, Success, NoMessage, Partial, Error };
     TransportState transport_state() const { return transportState; }
     long transport_status() const { return transportStatus; }
@@ -176,6 +183,8 @@ private:
     friend class J2534ReliabilityTest;
     friend class J2534TransportTest;
     friend class SH7058UploadTest;
+    friend class SH7058IdentificationSession;
+    CleanupResult lastCleanup_;
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(A) (sizeof(A)/sizeof((A)[0]))
 #endif

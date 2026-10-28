@@ -1,4 +1,6 @@
 #include "modules/ecu/subaru_sh7058_preflight.h"
+#include "serial_port/sh7058_identification_session.h"
+#include "serial_port/j2534_registry.h"
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -50,10 +52,37 @@ void MainWindow::menu_action_triggered(QString action)
 
     // ECU MENU
     if (action == "sh7058_identity") {
-        SubaruSH7058::UnavailableIdentificationLink link;
-        std::atomic<bool> cancel{false};
-        const auto result=SubaruSH7058::identify(link,cancel,500);
-        QMessageBox::information(this,tr("SH7058 identification — no transmission"),result.detail);
+        if (qApp->property("guiSmokeTest").toBool() || qApp->property("sh7058IdentityUncertain").toBool() ||
+            !serial->isDirectConnection() || serial->is_serial_port_open() || logging_state || ecu_init_started ||
+            logging_request_active || logparams_read_active || can_listener_on || simulate_obd_on) {
+            QMessageBox::warning(this,tr("ECU identification refused"),tr("Requires an idle local application, closed device/channel and no uncertain prior worker. No request sent."));
+            return;
+        }
+#ifndef Q_OS_WIN
+        QMessageBox::information(this,tr("ECU identification"),tr("The isolated identification backend requires native Windows x64. No device opened."));
+#else
+        QJsonArray errors;const auto drivers=J2534Diagnostics::registeredDrivers(errors);
+        if (!errors.isEmpty()) { QMessageBox::warning(this,tr("Identification"),tr("Driver registry discovery incomplete. No DLL loaded.")); return; }
+        QStringList ids;
+        for (const auto &driver:drivers) ids.append(driver.id+" | "+driver.description+" | "+(driver.issue.isEmpty()?tr("hardware untested"):driver.issue));
+        bool ok=false;
+        const auto selected=QInputDialog::getItem(this,tr("Select reviewed official OBDX driver"),tr("Installed J2534 registrations (local inspection only):"),ids,0,false,&ok);
+        if (!ok || selected.isEmpty()) return;
+        const int selectedIndex=ids.indexOf(selected);
+        const auto hash=QInputDialog::getText(this,tr("Reviewed driver identity"),tr("Exact SHA-256 from the reviewed official x64 OBDX DLL (Stage A report). Clone/unreviewed drivers are refused:"),QLineEdit::Normal,QString(),&ok);
+        if (!ok) return;
+        if (QMessageBox::question(this,tr("Authorize ECU identification only"),tr("This is an ACTIVE ECU diagnostic operation. Proceed only after separate physical-test approval and USB-only Stage B validation.\nConfirm official OBDX driver/open behavior reviewed, all other adapter users closed and the approved vehicle/supply setup ready.\nOnly AA and 09/04 at 500 kbit/s, 7E0/7E8 are permitted; no session change, security, reset or programming. The returned short CAL-ID cannot confirm DM24000. Proceed?"),QMessageBox::Yes|QMessageBox::No,QMessageBox::No)!=QMessageBox::Yes) return;
+        const bool voltagePolling=vbatt_timer->isActive();vbatt_timer->stop();
+        setEnabled(false);
+        const auto result=launchSH7058Identification(drivers.at(selectedIndex).id,hash.trimmed());
+        setEnabled(true);
+        if (result["uncertain"].toBool() || (result.contains("cleanup_confirmed") && !result["cleanup_confirmed"].toBool()))
+            qApp->setProperty("sh7058IdentityUncertain",true);
+        else if (voltagePolling) vbatt_timer->start();
+        qApp->setProperty("sh7058LastIdentity",result);
+        QMessageBox box(this);box.setWindowTitle(tr("ECU identification — no programming admission"));
+        box.setText(QString::fromUtf8(QJsonDocument(result).toJson()));box.setTextInteractionFlags(Qt::TextSelectableByMouse);box.exec();
+#endif
         return;
     }
     if (action == "sh7058_preflight") {
@@ -87,7 +116,13 @@ void MainWindow::menu_action_triggered(QString action)
             bool addressOk=false; config.kernelAddress=configValues->flash_protocol_kernel_addr.at(index).toUInt(&addressOk,0);
             if (!addressOk) config.kernelAddress=0;
         }
-        auto result=checkCompatibility(image,original,kernelBytes,definition,config,Identification());
+        Identification observation;
+        const auto last=qApp->property("sh7058LastIdentity").toJsonObject();
+        if (last["ok"].toBool() && last["cleanup_confirmed"].toBool()) {
+            observation.ecu=last["ecu_id"].toString();observation.calibration=last["obd_calibration_id"].toString();
+            observation.source=Identification::Source::ObservedDiagnostic;observation.generation=last["generation"].toString().toULongLong();
+        }
+        auto result=checkCompatibility(image,original,kernelBytes,definition,config,observation);
         input.seek(0);
         const auto diskHash=SubaruSH7058Safety::fingerprint(input.readAll());
         if (diskHash!=original) {
@@ -98,7 +133,9 @@ void MainWindow::menu_action_triggered(QString action)
         QJsonArray chain,hashes; for (const auto &v:definition.ancestry) chain.append(v);
         for (const auto &v:definition.documentHashes) hashes.append(v);
         report["definition_chain"]=chain;report["definition_document_sha256"]=hashes;
-        report["ecu_observed"]=false;
+        report["ecu_observed"]=observation.source==Identification::Source::ObservedDiagnostic;
+        report["observation_note"]="Earlier isolated observation only; not proof of the currently connected ECU or full custom firmware variant";
+        report["observed_ecu_id"]=observation.ecu;report["observed_obd_calibration_id"]=observation.calibration;
         QMessageBox box(this);box.setWindowTitle(tr("SH7058 offline compatibility — no programming admission"));
         box.setText(QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Indented)));
         box.setTextInteractionFlags(Qt::TextSelectableByMouse);box.exec();

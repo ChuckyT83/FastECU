@@ -171,7 +171,7 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
     QSignalMapper *mapper = fileActions->read_menu_file(ui->menubar, ui->toolBar);
     // Code-owned preparation actions are available even with an older user menu.cfg.
     auto *preflightMenu = ui->menubar->addMenu(tr("SH7058 preflight"));
-    auto *identifyAction = preflightMenu->addAction(tr("ECU identification (live unavailable)"));
+    auto *identifyAction = preflightMenu->addAction(tr("Read ECU identity (AA/CAL-ID)"));
     identifyAction->setObjectName("sh7058_identity");
     connect(identifyAction, &QAction::triggered, this, [this] { menu_action_triggered("sh7058_identity"); });
     auto *preflightAction = preflightMenu->addAction(tr("BIN/XML compatibility (offline)"));
@@ -1014,7 +1014,7 @@ int MainWindow::start_ecu_operations(QString cmd_type)
     int sh7058Result = 0;
     if (sh7058Operation) {
         QMessageBox::warning(this, tr("SH7058 operation blocked"), cmd_type == "read"
-            ? tr("ROM Read may enter programming/security sessions. It is not ECU identification. Use the separate SH7058 preflight menu; live identification is currently unavailable pending firmware evidence.")
+            ? tr("ROM Read may enter programming/security sessions. It is not ECU identification. Use the separate SH7058 preflight menu; identification requires a separate reviewed OBDX session.")
             : tr("SH7058 upload/write/test-write and unknown legacy operations remain disabled. No adapter configured or opened."));
         return 1; // Before reset, voltage poll, port configuration or opening.
     }

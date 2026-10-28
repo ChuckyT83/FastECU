@@ -7,9 +7,9 @@
 #include <atomic>
 namespace SubaruSH7058 {
 // Candidate application requests from historical FastECU; ordinary-state target
-// support/effects have NOT been established from the unavailable private firmware.
+// handlers were checked in the pinned firmware; they do not enter a new session.
 struct Identification {
-    QString ecu, calibration;
+    QString ecu, calibration, firmware; // Raw OBD CAL-ID is not the full custom firmware label.
     QByteArray ecuReply, calibrationReply;
     enum class Source { Missing, OfflineReplay, ObservedDiagnostic } source = Source::Missing;
     quint64 generation = 0;
@@ -24,8 +24,9 @@ public:
 class IdentificationLink {
 public:
     virtual ~IdentificationLink() = default;
-    // The only admitted context is an injected offline fixture, never live J2534.
+    // Only an offline fixture or the separately owned identity-only backend is admitted.
     virtual bool offlineFixture() const noexcept = 0;
+    virtual bool isolatedDiagnostic() const noexcept { return false; }
     virtual bool acquire() = 0; // Exclusive device/channel/receive queue ownership.
     virtual quint64 generation() const noexcept = 0;
     virtual CommunicationResult submit(const QByteArray &) = 0;
@@ -60,6 +61,7 @@ struct Definition {
 Definition resolveDefinition(const QVector<QByteArray> &documents, const QString &selectedXmlId);
 struct Target {
     QString ecu = "A62A907107", calibration = "ZE5T201V_DM24000", parent = "AE5T201V";
+    QString obdCalibration = "ZE5T201V";
     QByteArray imageHash = QByteArray::fromHex("15102939df167a4d76be9f33c20966fa4f707bb171aff846c7117108cc9c875c");
     QByteArray kernelHash = QByteArray::fromHex("5fb9cb8973c6a3746e0e6a3afa328e9db57c66dd8d227ab3872cd2f80946b82e");
 };
@@ -73,6 +75,7 @@ struct Compatibility {
     State state = State::MissingEvidence;
     QByteArray originalHash, finalHash;
     QStringList reasons;
+    QJsonObject evidence;
     bool checksumCorrectionRequired = false;
     bool programmingAllowed() const { return false; }
     QJsonObject json() const;
