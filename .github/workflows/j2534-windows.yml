@@ -74,6 +74,10 @@ jobs:
             # Also expose script/host exceptions that occur before Invoke-Logged
             # can annotate a failed child. CI logs contain only public source/mocks.
             $message = $_.Exception.Message + " at " + $_.InvocationInfo.PositionMessage + "`n" + $_.ScriptStackTrace
+            foreach ($testFile in (Get-ChildItem build-j2534/logs -Filter '*-results.txt' -ErrorAction SilentlyContinue)) {
+              $failures = Get-Content $testFile.FullName | Select-String '^FAIL!' -Context 0,6
+              if ($failures) { $message += "`n" + $testFile.Name + "`n" + ($failures | Out-String -Width 500) }
+            }
             $recent = Get-ChildItem build-j2534/logs -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 2
             foreach ($logFile in $recent) {
               $message += "`n" + $logFile.Name + "`n" + ((Get-Content $logFile.FullName | Select-Object -Last 10) -join "`n")
