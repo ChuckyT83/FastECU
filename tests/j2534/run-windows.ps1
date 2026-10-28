@@ -70,6 +70,14 @@ try {
         $env:QT_STYLE_OVERRIDE = 'Fusion'
         Invoke-Logged -Name 'subaru-tests' -File (Join-Path $subaruBuild 'subaru-safety.exe') -Arguments @('-v1', '-o', "$(Join-Path $logs 'subaru-results.txt'),txt", '-o', "$(Join-Path $logs 'subaru-results.xml'),junitxml", '-o', '-,txt')
     } finally { Pop-Location }
+    $preflightBuild = Join-Path $build 'preflight'
+    New-Item -ItemType Directory -Force $preflightBuild | Out-Null
+    Push-Location $preflightBuild
+    try {
+        Invoke-Logged -Name 'qmake-preflight' -File 'qmake.exe' -Arguments @((Join-Path $source 'tests/subaru/preflight.pro'), 'CONFIG+=release', 'CONFIG-=debug_and_release', 'DESTDIR=.')
+        Invoke-Logged -Name 'build-preflight' -File 'nmake.exe' -Arguments @('/NOLOGO')
+        Invoke-Logged -Name 'preflight-tests' -File (Join-Path $preflightBuild 'subaru-preflight.exe') -Arguments @('-o', "$(Join-Path $logs 'preflight-results.txt'),txt", '-o', '-,txt')
+    } finally { Pop-Location }
     $facadeBuild = Join-Path $build 'facade'
     New-Item -ItemType Directory -Force $facadeBuild | Out-Null
     Push-Location $facadeBuild
@@ -150,6 +158,7 @@ try {
         ('Initialization: ' + ((Get-Content (Join-Path $logs 'initialization-results.txt') | Select-String 'Totals:') -join ' '))
         ('Transport: ' + ((Get-Content (Join-Path $logs 'transport-results.txt') | Select-String 'Totals:') -join ' '))
         ('Subaru production safety and offline upload candidate: ' + ((Get-Content (Join-Path $logs 'subaru-results.txt') | Select-String 'Totals:') -join ' '))
+        ('Identification and strict BIN preflight: ' + ((Get-Content (Join-Path $logs 'preflight-results.txt') | Select-String 'Totals:') -join ' '))
         ('Facade: ' + ((Get-Content (Join-Path $logs 'facade-results.txt') | Select-String 'Totals:') -join ' '))
         ('Synthetic kernel model: ' + ((Get-Content (Join-Path $logs 'kernel-offline-results.txt') | Select-String 'Totals:') -join ' '))
         ('Production upload candidate: ' + ((Get-Content (Join-Path $logs 'upload-candidate-results.txt') | Select-String 'Totals:') -join ' '))

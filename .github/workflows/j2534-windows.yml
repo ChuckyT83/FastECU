@@ -11,6 +11,7 @@ on:
       - 'modules/ecu/subaru_sh7058_safety.h'
       - 'modules/ecu/subaru_sh7058_kernel_layout.h'
       - 'modules/ecu/subaru_sh7058_upload_candidate.*'
+      - 'modules/ecu/subaru_sh7058_preflight.*'
       - 'modules/checksum/checksum_ecu_subaru_denso_sh7xxx.*'
       - 'file_actions.*'
       - 'mainwindow.cpp'

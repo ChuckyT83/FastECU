@@ -1,3 +1,7 @@
+#include "modules/ecu/subaru_sh7058_preflight.h"
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "serial_port_actions.h"
@@ -45,6 +49,61 @@ void MainWindow::menu_action_triggered(QString action)
         toggle_log_to_file();
 
     // ECU MENU
+    if (action == "sh7058_identity") {
+        SubaruSH7058::UnavailableIdentificationLink link;
+        std::atomic<bool> cancel{false};
+        const auto result=SubaruSH7058::identify(link,cancel,500);
+        QMessageBox::information(this,tr("SH7058 identification — no transmission"),result.detail);
+        return;
+    }
+    if (action == "sh7058_preflight") {
+        using namespace SubaruSH7058;
+        const auto bin=QFileDialog::getOpenFileName(this,tr("Select original BIN for read-only preflight"),QString(),tr("BIN (*.bin);;All files (*)"));
+        if (bin.isEmpty()) return;
+        QFile input(bin);
+        if (!input.open(QIODevice::ReadOnly) || input.size()!=1048576) { QMessageBox::warning(this,tr("Preflight"),tr("Cannot read an exact 1 MiB BIN. No bytes changed.")); return; }
+        const auto image=input.readAll(); const auto original=SubaruSH7058Safety::fingerprint(image);
+        const auto files=QFileDialog::getOpenFileNames(this,tr("Select XML including every inherited parent"),QString(),tr("XML (*.xml)"));
+        if (files.isEmpty()) return;
+        QVector<QByteArray> documents;
+        for (const auto &path:files) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly) || file.size()>16*1024*1024) { QMessageBox::warning(this,tr("Preflight"),tr("Definition unavailable or too large.")); return; }
+            documents.append(file.readAll());
+        }
+        bool accepted=false;
+        const auto id=QInputDialog::getText(this,tr("Exact XML selection"),tr("Selected child XML ID (not the parent alias):"),QLineEdit::Normal,"ZE5T201V_DM24000",&accepted);
+        if (!accepted || id.isEmpty()) return;
+        const auto definition=resolveDefinition(documents,id);
+        Configuration config; config.protocol=configValues->flash_protocol_selected_protocol_name;
+        config.transport=configValues->flash_protocol_selected_flash_transport;
+        config.mcu=configValues->flash_protocol_selected_mcu; config.checksumEnabled=configValues->flash_protocol_selected_checksum;
+        config.map=SubaruSH7058Safety::memoryMap(config.mcu);
+        bool indexOk=false;const int index=configValues->flash_protocol_selected_id.toInt(&indexOk);
+        QByteArray kernelBytes;
+        if (indexOk && index>=0 && index<configValues->flash_protocol_kernel.size() && index<configValues->flash_protocol_kernel_addr.size()) {
+            QFile kernel(configValues->kernel_files_directory+"/"+configValues->flash_protocol_kernel.at(index));
+            if (kernel.open(QIODevice::ReadOnly) && kernel.size()<65536) kernelBytes=kernel.readAll();
+            bool addressOk=false; config.kernelAddress=configValues->flash_protocol_kernel_addr.at(index).toUInt(&addressOk,0);
+            if (!addressOk) config.kernelAddress=0;
+        }
+        auto result=checkCompatibility(image,original,kernelBytes,definition,config,Identification());
+        input.seek(0);
+        const auto diskHash=SubaruSH7058Safety::fingerprint(input.readAll());
+        if (diskHash!=original) {
+            result.state=Compatibility::State::Incompatible;result.reasons.append("BIN changed on disk during preflight; reload required");
+        }
+        auto report=result.json(); report["file_sha256_after"]=QString::fromLatin1(diskHash.toHex()); report["file_unchanged"]=diskHash==original;
+        report["definition_xml_id"]=definition.xmlId;
+        QJsonArray chain,hashes; for (const auto &v:definition.ancestry) chain.append(v);
+        for (const auto &v:definition.documentHashes) hashes.append(v);
+        report["definition_chain"]=chain;report["definition_document_sha256"]=hashes;
+        report["ecu_observed"]=false;
+        QMessageBox box(this);box.setWindowTitle(tr("SH7058 offline compatibility — no programming admission"));
+        box.setText(QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Indented)));
+        box.setTextInteractionFlags(Qt::TextSelectableByMouse);box.exec();
+        return;
+    }
     if (action == "connect_to_ecu")
         connect_to_ecu();
     if (action == "disconnect_from_ecu")

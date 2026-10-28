@@ -1,3 +1,4 @@
+#include "modules/ecu/subaru_sh7058_preflight.h"
 #include "modules/ecu/subaru_sh7058_safety.h"
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
@@ -168,6 +169,14 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
 
     setSplashScreenProgress("Setting up menus...", 10);
     QSignalMapper *mapper = fileActions->read_menu_file(ui->menubar, ui->toolBar);
+    // Code-owned preparation actions are available even with an older user menu.cfg.
+    auto *preflightMenu = ui->menubar->addMenu(tr("SH7058 preflight"));
+    auto *identifyAction = preflightMenu->addAction(tr("ECU identification (live unavailable)"));
+    identifyAction->setObjectName("sh7058_identity");
+    connect(identifyAction, &QAction::triggered, this, [this] { menu_action_triggered("sh7058_identity"); });
+    auto *preflightAction = preflightMenu->addAction(tr("BIN/XML compatibility (offline)"));
+    preflightAction->setObjectName("sh7058_preflight");
+    connect(preflightAction, &QAction::triggered, this, [this] { menu_action_triggered("sh7058_preflight"); });
 #if QT_VERSION >=0x060000
     connect(mapper, SIGNAL(mappedString(QString)), this, SLOT(menu_action_triggered(QString)));
 #elif QT_VERSION >=0x050000
@@ -1003,6 +1012,12 @@ int MainWindow::start_ecu_operations(QString cmd_type)
 {
     const bool sh7058Operation = SubaruSH7058Safety::usesModule(configValues->flash_protocol_selected_protocol_name);
     int sh7058Result = 0;
+    if (sh7058Operation) {
+        QMessageBox::warning(this, tr("SH7058 operation blocked"), cmd_type == "read"
+            ? tr("ROM Read may enter programming/security sessions. It is not ECU identification. Use the separate SH7058 preflight menu; live identification is currently unavailable pending firmware evidence.")
+            : tr("SH7058 upload/write/test-write and unknown legacy operations remain disabled. No adapter configured or opened."));
+        return 1; // Before reset, voltage poll, port configuration or opening.
+    }
     // Reject before the legacy UI prelude can make unchecked QtRO calls.
     if (sh7058Operation &&
         !serial->isDirectConnection()) {

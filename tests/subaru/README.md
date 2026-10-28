@@ -59,3 +59,13 @@ measured from the Task 004 production module using the same fixture. Windows
 runs the GUI suite with `QT_QPA_PLATFORM=windows` and Fusion style; the serial suites retain their
 existing backend. The explicit test main flushes output so abnormal termination
 preserves startup markers and the last entered test in CI diagnostics.
+
+## Task 006N identification/compatibility
+
+`preflight.pro` tests the production identity parsers, offline-only acquisition/
+request/deadline/cleanup workflow, XML inheritance, exact byte-preserving BIN/
+ECU/definition/protocol/kernel policy and permanent ROM Read admission denial.
+Fixtures are synthetic; no private XML/BIN or physical J2534 provider is linked.
+Build/run like safety.pro with Qt Widgets/XML/Test. The native Windows runner
+includes this target and publishes its exact QtTest total. Passing a fixture is
+not ordinary-session firmware evidence or live identification permission.

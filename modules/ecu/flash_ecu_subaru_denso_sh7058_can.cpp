@@ -1,3 +1,4 @@
+#include "subaru_sh7058_preflight.h"
 #include "flash_ecu_subaru_denso_sh7058_can.h"
 #include "serial_port_actions.h"
 #include "subaru_sh7058_safety.h"
@@ -214,6 +215,17 @@ void FlashEcuSubaruDensoSH7058Can::run()
         return;
     }
     if (kill_process) { operationResult = STATUS_CANCELLED; return; }
+    if (cmd_type != "read" && cmd_type != "write" && cmd_type != "test_write") {
+        communication = CommunicationResult::failure(CommState::Unsupported, "Unknown SH7058 operation refused before session entry");
+        report_operation(STATUS_ERROR);
+        return;
+    }
+    if (cmd_type == "read" && !SubaruSH7058::legacyReadAdmitted()) {
+        communication = CommunicationResult::failure(CommState::Unsupported,
+            "SH7058 ROM Read is a programming-related workflow, not harmless identification. Session admission remains disabled; no adapter opened.");
+        report_operation(STATUS_ERROR);
+        return;
+    }
     QString mcu_name = flashdevices[mcu_type_index].name;
     emit LOG_D("MCU type: " + mcu_name + " " + mcu_type_string + " and index: " + QString::number(mcu_type_index), true, true);
 

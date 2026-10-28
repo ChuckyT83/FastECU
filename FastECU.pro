@@ -1,3 +1,5 @@
+SOURCES += modules/ecu/subaru_sh7058_preflight.cpp
+HEADERS += modules/ecu/subaru_sh7058_preflight.h
 HEADERS += gui_startup_smoke.h
 QT += core gui xml serialport remoteobjects websockets
 

@@ -779,6 +779,18 @@ private slots:
         QVERIFY(port.writes.isEmpty());
         cancel(); QCOMPARE(module->upload_kernel(file.fileName(),0xFFFF3000),3); QVERIFY(port.writes.isEmpty());
     }
+    void readEntryRequiresAdmission() {
+        module->cmd_type="read";module->kernel_alive=true;
+        QTimer timer;connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets())if(auto *b=qobject_cast<QMessageBox*>(w))b->accept();});timer.start(1);
+        module->run();QCOMPARE(module->operation_result(),1);QCOMPARE(port.setupCalls,0);QCOMPARE(port.checkedReads,0);QVERIFY(port.writes.isEmpty());
+        QVERIFY(module->communication.detail.contains("programming-related"));
+    }
+    void unknownOperationGated() {
+        module->cmd_type="unknown";
+        QTimer timer;connect(&timer,&QTimer::timeout,[]{for(auto *w:QApplication::topLevelWidgets())if(auto *b=qobject_cast<QMessageBox*>(w))b->accept();});timer.start(1);
+        module->run();QCOMPARE(module->operation_result(),1);QCOMPARE(port.setupCalls,0);QCOMPARE(port.checkedReads,0);QVERIFY(port.writes.isEmpty());
+        QVERIFY(module->communication.detail.contains("Unknown SH7058 operation"));
+    }
     void programmingEntryGated_data() {
         QTest::addColumn<QString>("mode"); QTest::addColumn<bool>("runningKernel");
         for(const char *mode:{"write","test_write"}) for(bool running:{false,true})
