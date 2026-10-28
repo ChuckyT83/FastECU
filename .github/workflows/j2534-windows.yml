@@ -67,7 +67,22 @@ jobs:
           cache: false
       - name: Build and run J2534, Subaru safety, and offline candidate tests
         shell: pwsh
-        run: ./tests/j2534/run-windows.ps1
+        run: |
+          try {
+            ./tests/j2534/run-windows.ps1
+          } catch {
+            # Also expose script/host exceptions that occur before Invoke-Logged
+            # can annotate a failed child. CI logs contain only public source/mocks.
+            $message = $_.Exception.Message + " at " + $_.InvocationInfo.PositionMessage + "`n" + $_.ScriptStackTrace
+            $recent = Get-ChildItem build-j2534/logs -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 2
+            foreach ($logFile in $recent) {
+              $message += "`n" + $logFile.Name + "`n" + ((Get-Content $logFile.FullName | Select-Object -Last 10) -join "`n")
+            }
+            if ($message.Length -gt 3500) { $message = $message.Substring(0, 3500) }
+            $message = $message.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Output "::error title=Native MSVC execution failure::$message"
+            throw
+          }
       - name: Report installer failures
         if: failure()
         shell: pwsh
