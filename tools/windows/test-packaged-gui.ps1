@@ -62,6 +62,16 @@ try {
     $env:QT_QPA_PLATFORM = 'windows'
     $env:QT_STYLE_OVERRIDE = 'Fusion'
     Invoke-Smoke 'relocated-help' @('--help')
+    # Passive relocated discovery proves GUI/worker paths and build pins agree.
+    $discovery=Join-Path $logs 'packaged-adapter-discovery.json'
+    $d=Start-Process -FilePath (Join-Path $relocated 'diagnostics/x64/fastecu-j2534-diagnostics.exe') -ArgumentList '--adapter-manager-list' -WorkingDirectory $working -PassThru -RedirectStandardOutput $discovery -RedirectStandardError (Join-Path $logs 'packaged-adapter-discovery.stderr.log')
+    if(-not $d.WaitForExit(30000)){throw 'Passive packaged adapter discovery timed out'}
+    $d.WaitForExit()
+    if($d.ExitCode -ne 0){throw 'Passive packaged adapter discovery failed'}
+    $adapters=Get-Content $discovery -Raw | ConvertFrom-Json
+    $custom=@($adapters.adapters | Where-Object {$_.kind -eq 'reviewed-custom-openport' -and $_.available})
+    if($custom.Count -ne 1){throw 'Packaged custom OpenPort driver was not automatically available'}
+
     $result = Join-Path $logs 'packaged-gui.json'
     Invoke-Smoke 'packaged-gui' @('--gui-smoke-test', "`"$result`"")
     $r = Get-Content $result -Raw | ConvertFrom-Json
