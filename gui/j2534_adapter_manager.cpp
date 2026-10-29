@@ -27,7 +27,7 @@ void J2534AdapterController::launch(const QStringList &args,const QString &mode)
     if(active)return;
     active=true;operation=mode;
     process.setProgram(helper);
-    process.setArguments(args);process.start();watchdog.start();emit changed();
+    process.setArguments(args);watchdog.start();emit changed();process.start();
 }
 void J2534AdapterController::refresh() {if(!busy())launch({"--adapter-manager-list"},"list");}
 void J2534AdapterController::test(const QString &id) {

@@ -37,6 +37,10 @@ private slots:
         QVERIFY(!dialog.findChild<QPushButton*>("adapterTest")->isEnabled());
         QVERIFY(dialog.findChild<QLabel*>("adapterStatus")->text().contains("dependency missing"));
     }
+    void missingHelperHasUsefulError() {
+        J2534AdapterController c(nullptr,"C:/missing/FastECU-no-helper.exe");c.test("unused");
+        QTRY_VERIFY(!c.busy());QVERIFY(c.lastReport["error"].toString().contains("component is missing"));
+    }
     void duplicateTestIsNotStarted() {
         J2534AdapterController c(nullptr,QCoreApplication::applicationFilePath());QSignalSpy changes(&c,&J2534AdapterController::changed);
         c.test("first");QVERIFY(c.busy());const int before=changes.count();
