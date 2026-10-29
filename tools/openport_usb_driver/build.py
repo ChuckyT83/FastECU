@@ -40,3 +40,5 @@ if args.native_mocks:
 manifest['native_mock_cases_passed']=len(results)
 (out/'build-manifest.json').write_text(json.dumps(manifest,indent=2))
 print('Reviewed driver artifact SHA-256:',manifest['j2534_dll_sha256'])
+
+(out/'adapter-manifest.json').write_text(json.dumps({'driver_sha256':manifest['j2534_dll_sha256'],'dependency_sha256':manifest['libusb_dll_sha256'],'source_revision':manifest['upstream_revision'],'lifecycle':'USBQUAL/1','driver_source_sha256':manifest['source_sha256']['j2534/j2534.c']},indent=2))

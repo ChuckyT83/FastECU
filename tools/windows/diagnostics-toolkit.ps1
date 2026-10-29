@@ -59,9 +59,15 @@ Build-Target $tool 'tools/j2534_diagnostics/diagnostics.pro' $reviewedExtra
 Build-Target $testTool 'tools/j2534_diagnostics/diagnostics.pro' (@('CONFIG+=diagnostic_test')+$reviewedExtra)
 Build-Target $unit 'tests/j2534/diagnostics.pro'
 Build-Target $cli 'tests/j2534/diagnostic_cli.pro'
+$guiTests=Join-Path $build 'adapter-gui-tests'
+Build-Target $guiTests 'tests/j2534/adapter_gui.pro'
+$env:QT_QPA_PLATFORM='offscreen'
+Invoke-Kit 'adapter-gui-results' (Join-Path $guiTests 'adapter-gui-tests.exe') @('-o',"$(Join-Path $logs 'adapter-gui-results.txt'),txt",'-o','-,txt')
+Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
 $mock=Join-Path $source 'tests/j2534/mock_dll.cpp'
 Push-Location $unit
 try {
+    Invoke-Kit 'mock-version-resource' 'windres.exe' @((Join-Path $source 'tests/j2534/mock_version.rc'),'-O','coff','-o','mock-version.o')
     $variants=@(
         @{Name='mock-j2534.dll';Define=''},
         @{Name='incomplete-j2534.dll';Define='OMIT_IOCTL'},
@@ -76,7 +82,7 @@ try {
         @{Name='usbqual-release-failure.dll';Define='MOCK_USBQUAL -DMOCK_USBQUAL_RELEASE_FAILURE'},
         @{Name='usbqual-delayed.dll';Define='MOCK_USBQUAL -DMOCK_OPEN_DELAY_MS=500'})
     foreach($v in $variants) {
-        $arguments=@('-std=c++11','-O2','-shared',$mock,'-o',$v.Name)
+        $arguments=@('-std=c++11','-O2','-shared',$mock,'mock-version.o','-o',$v.Name)
         if($Architecture -eq 'x86'){$arguments+='-Wl,--kill-at'}
         if($v.Define){$arguments+=("-D$($v.Define)" -split " ")}
         Invoke-Kit "mock-$($v.Name)" 'g++.exe' $arguments

@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/windows-development-build.yml'
       - 'tools/windows/**'
+      - 'tools/openport_usb_driver/**'
       - 'tools/j2534_diagnostics/**'
       - 'tests/j2534/**'
       - 'docs/adapter-arrival-checklist.md'
@@ -95,9 +96,14 @@ jobs:
           aqtversion: '==3.3.0'
           py7zrversion: '==1.0.0'
           cache: false
+      - name: Build and fake-test the maintained custom OpenPort driver
+        shell: pwsh
+        run: ./tools/windows/build-openport-usb.ps1 -BuildDirectory build-usb-driver
       - name: Build, mock-test and package x64 diagnostics
         shell: pwsh
-        run: ./tools/windows/diagnostics-toolkit.ps1 -Architecture x64 -BuildDirectory build-diagnostics-x64
+        run: |
+          $manifest=Get-Content build-usb-driver/driver-build/build-manifest.json -Raw | ConvertFrom-Json
+          ./tools/windows/diagnostics-toolkit.ps1 -Architecture x64 -BuildDirectory build-diagnostics-x64 -ReviewedOpenPortSHA256 $manifest.j2534_dll_sha256
       - name: Retain independently usable x64 toolkit
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -128,7 +134,8 @@ jobs:
         shell: pwsh
         run: |
           try {
-            ./tools/windows/package-development.ps1 -OpenSslSource .deps/openssl-source -BuildDirectory build-windows-development
+            $manifest=Get-Content build-usb-driver/driver-build/build-manifest.json -Raw | ConvertFrom-Json
+            ./tools/windows/package-development.ps1 -OpenSslSource .deps/openssl-source -BuildDirectory build-windows-development -ReviewedOpenPortSHA256 $manifest.j2534_dll_sha256
           } catch {
             $message = $_.Exception.Message + " at " + $_.InvocationInfo.PositionMessage
             if ($message.Length -gt 3000) { $message = $message.Substring(0, 3000) }
@@ -155,6 +162,9 @@ jobs:
           } else {
             'x86 toolkit not included in this archive; consult its independent job/artifact. x64 remains usable.' | Set-Content "$package/X86-TOOLKIT-STATUS.txt"
           }
+          New-Item -ItemType Directory -Force "$package/adapters/openport" | Out-Null
+          Copy-Item build-usb-driver/driver-package/* "$package/adapters/openport" -Recurse
+          Copy-Item docs/j2534-adapter-manager.md $package
           Copy-Item tools/windows/collect-adapter-diagnostics.ps1 $package
           Copy-Item docs/adapter-arrival-checklist.md,docs/j2534-diagnostic-command-reference.md,docs/adapter-diagnostics-troubleshooting.md,docs/sh7058-identification-preflight.md $package
           Get-ChildItem $package -Recurse -File | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize | Out-String -Width 500 | Set-Content build-windows-development/logs/package-sha256.txt

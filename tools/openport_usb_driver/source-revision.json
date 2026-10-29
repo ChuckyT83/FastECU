@@ -10,7 +10,7 @@
     "tests/abi-x64.c": "9790ed50af94a7c611305e9c39dc97dfb44f3344efb4a9f0e37f7b2c9f13a99f",
     "LICENSE": "4a165f4dbdcfa96488a19af37430f098973d95fa4a2181ac753d9ed7c0d4f696",
     ".gitattributes": "fcabdd740511833ea71a8b224fc031599dec86b932581fb6a2fd16bc93a010b5",
-    "build.py": "366c4098446344f583fce3efef12c6fe912341d851310d4c7a1730ed8dda45fb"
+    "build.py": "4e1e8a5680540776d7203b198c03b4e5c0b3370045e4b6aed9572c9eda73741b"
   },
   "libusb_version": "1.0.29",
   "libusb_archive_sha256": "964a38152ca9a104cd00ec8d2f0617b89cd814f9b635e29763c68563d951521d",

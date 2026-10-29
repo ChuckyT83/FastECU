@@ -2,6 +2,7 @@
 #include "modules/ecu/subaru_sh7058_safety.h"
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "gui/j2534_adapter_manager.h"
 #include <QSplashScreen>
 #include "serial_port_actions.h"
 
@@ -169,6 +170,22 @@ MainWindow::MainWindow(QString peerAddress, QString peerPassword, QWidget *paren
 
     setSplashScreenProgress("Setting up menus...", 10);
     QSignalMapper *mapper = fileActions->read_menu_file(ui->menubar, ui->toolBar);
+    auto *adapterController = new J2534AdapterController(this);
+    connect(adapterController, &J2534AdapterController::changed, this, [adapterController] {
+        qApp->setProperty("j2534AdapterTestActive", adapterController->busy());
+    });
+    adapterController->transportBusy = [this] { return serial && serial->is_serial_port_open(); };
+    QMenu *toolsMenu = nullptr;
+    for (auto *action : ui->menubar->actions())
+        if (action->menu() && action->text().remove('&') == tr("Tools")) toolsMenu = action->menu();
+    if (!toolsMenu) toolsMenu = ui->menubar->addMenu(tr("Tools"));
+    auto *adapterAction = toolsMenu->addAction(tr("J2534 Adapter Manager"));
+    adapterAction->setObjectName("j2534_adapter_manager");
+    connect(adapterAction, &QAction::triggered, this, [this, adapterController] {
+        J2534AdapterManager dialog(adapterController, this);
+        adapterController->refresh();
+        dialog.exec();
+    });
     // Code-owned preparation actions are available even with an older user menu.cfg.
     auto *preflightMenu = ui->menubar->addMenu(tr("SH7058 preflight"));
     auto *identifyAction = preflightMenu->addAction(tr("Read ECU identity (AA/CAL-ID)"));

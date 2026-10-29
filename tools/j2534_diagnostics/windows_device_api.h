@@ -22,8 +22,10 @@ class WindowsDeviceApi final : public J2534Diagnostics::DeviceOnlyApi {
     using LastError=long(WINAPI *)(char *);
     LastError lastError_=nullptr;
     Open open_=nullptr;Close close_=nullptr;Version version_=nullptr;
+    bool manager=false;QString ownershipName;
 public:
     ~WindowsDeviceApi() override {unload();}
+    void managerDiagnostics(const QString &) {manager=true;ownershipName="Local\\FastECU-OBDX-USBOnly-v1";}
     void pinHash(const QString &hash) {expectedHash=hash;}
     void qualifyCustomOpenPort(const QString &log) {custom=true;lifecycleLog=log;}
     bool reviewedOpenPort() const override {return custom;}
@@ -33,7 +35,7 @@ public:
         return DiagnosticReport::openPortLifecycleEvidence(file.readAll());
     }
     QString failureDetail() override {
-        if(!custom || !lastError_)return {};
+        if(!lastError_)return {};
         char text[80]={};const auto status=lastError_(text);
         diagnostics_["get_last_error_status"]=qint64(status);
         diagnostics_["get_last_error_calls"]=diagnostics_["get_last_error_calls"].toInt()+1;
@@ -53,6 +55,12 @@ public:
             char data[65536];DWORD count=0;
             while(ok){if(!ReadFile(fileLock,data,sizeof(data),&count,nullptr)){ok=false;break;}if(!count)break;hash.addData(data,int(count));}
             if(!ok || QString::fromLatin1(hash.result().toHex()).compare(expectedHash,Qt::CaseInsensitive)!=0){error="Pinned driver hash mismatch while file locked; no DLL loaded";unload();return false;}
+        }
+        if(manager && !custom) {
+            ownershipMutex=CreateMutexW(nullptr,FALSE,reinterpret_cast<LPCWSTR>(ownershipName.utf16()));
+            if(!ownershipMutex){error="Cannot create adapter ownership mutex";unload();return false;}
+            const auto wait=WaitForSingleObject(ownershipMutex,0);mutexOwned=wait==WAIT_OBJECT_0 || wait==WAIT_ABANDONED;
+            if(wait!=WAIT_OBJECT_0){error="Another test is using this adapter, or prior state is uncertain";unload();return false;}
         }
         if(custom) {
             if(expectedHash.compare(DiagnosticReport::reviewedOpenPortHash(),Qt::CaseInsensitive)!=0) {
@@ -91,7 +99,7 @@ public:
         open_=reinterpret_cast<Open>(GetProcAddress(library,"PassThruOpen"));
         close_=reinterpret_cast<Close>(GetProcAddress(library,"PassThruClose"));
         version_=reinterpret_cast<Version>(GetProcAddress(library,"PassThruReadVersion"));
-        if(custom)lastError_=reinterpret_cast<LastError>(GetProcAddress(library,"PassThruGetLastError"));
+        if(custom || manager)lastError_=reinterpret_cast<LastError>(GetProcAddress(library,"PassThruGetLastError"));
         if(!open_ || !close_ || !version_){error="Missing required device-only export (Open, ReadVersion or Close)";unload();return false;}
         if(custom && !lastError_){error="Reviewed custom driver missing GetLastError";unload();return false;}
         return true;

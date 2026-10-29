@@ -13,6 +13,7 @@ $required = @('FastECU.exe', 'qt.conf', 'platforms/qwindows.dll',
     'config/fastecu.cfg', 'config/menu.cfg', 'config/protocols.cfg', 'config/logger.cfg',
     'collect-adapter-diagnostics.ps1', 'adapter-arrival-checklist.md',
     'j2534-diagnostic-command-reference.md', 'adapter-diagnostics-troubleshooting.md', 'sh7058-identification-preflight.md',
+    'adapters/openport/j2534.dll','adapters/openport/libusb-1.0.dll','adapters/openport/adapter-manifest.json',
     'LICENSE', 'third-party-licenses', 'diagnostics/x64/fastecu-j2534-diagnostics.exe')
 # qmake's Charts SDK declaration does not imply an imported Charts runtime:
 # the application currently has no QChart symbols. Check the real PE imports.
@@ -64,7 +65,7 @@ try {
     $result = Join-Path $logs 'packaged-gui.json'
     Invoke-Smoke 'packaged-gui' @('--gui-smoke-test', "`"$result`"")
     $r = Get-Content $result -Raw | ConvertFrom-Json
-    if (-not $r.ok -or -not $r.mainwindow_constructed -or -not $r.window_visible -or -not $r.window_exposed -or
+    if (-not $r.adapter_manager_menu -or -not $r.adapter_manager_visible -or -not $r.adapter_manager_screenshot -or -not $r.ok -or -not $r.mainwindow_constructed -or -not $r.window_visible -or -not $r.window_exposed -or
         -not $r.window_closed -or -not $r.mainwindow_destroyed -or $r.heartbeats -lt 20 -or $r.paint_events -lt 1 -or
         -not $r.hardware_opening_disabled -or $r.remote_enabled -or $r.platform -ne 'windows') {
         throw 'GUI did not establish native visible/responsive/closed state'

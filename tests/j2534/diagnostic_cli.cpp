@@ -160,6 +160,34 @@ private slots:
         const auto late=run({"--collect",token});QCOMPARE(exitCode,1);QVERIFY(late["prior_parent_timeout"].toBool());
         qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
     }
+    void managerCustomLifecycle() {
+        if(sizeof(void*)!=8)QSKIP("Custom OpenPort is x64 only");
+        const auto file=mock("usbqual-j2534.dll");customArgs(file);registration(file,"OpenPort custom fixture");
+        const auto list=run({"--adapter-manager-list"});QCOMPARE(exitCode,0);
+        bool found=false;for(const auto &v:list["adapters"].toArray())if(v.toObject()["id"].toString()==file){found=true;QVERIFY(v.toObject()["available"].toBool());}
+        QVERIFY(found);
+        const auto result=run({"--adapter-manager-test",file});QCOMPARE(exitCode,0);QVERIFY(result["ok"].toBool());
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
+    void managerObdxLifecycle() {
+        const auto file=mock();registration(file,"OBDX Pro VX");
+        const auto result=run({"--adapter-manager-test",file});QCOMPARE(exitCode,0);QVERIFY(result["ok"].toBool());
+        QCOMPARE(result["adapter_label"].toString(),QString("obdx-pro-vx"));
+    }
+    void managerMissingDependency() {
+        if(sizeof(void*)!=8)QSKIP("Custom OpenPort is x64 only");
+        QTemporaryDir temporary;const auto file=temporary.filePath("j2534.dll");
+        QVERIFY(QFile::copy(mock("usbqual-j2534.dll"),file));customArgs(file);registration(file,"OpenPort custom fixture");
+        const auto result=run({"--adapter-manager-test",file});QCOMPARE(exitCode,2);
+        QVERIFY(result["error"].toString().contains("dependency",Qt::CaseInsensitive));
+        QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
+    void managerRefusesProprietaryName() {
+        const auto file=mock();registration(file,"Tactrix OpenPort 2.0");
+        const auto result=run({"--adapter-manager-test",file});QCOMPARE(exitCode,2);QVERIFY(!result["device_opened"].toBool());
+        QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));
+    }
     void pendingCallNotTerminated(){
         const auto file=mock("delayed-j2534.dll");registration(file);auto args=deviceArgs(file);args<<"--wait-ms"<<"100";
         const auto r=run(args);QCOMPARE(exitCode,1);const auto pending=r["device_result"].toObject();QVERIFY(!pending["worker_terminated"].toBool());QCOMPARE(pending["validation_level"].toString(),QString("device_call_pending_or_uncertain"));const auto token=pending["worker_result_token"].toString();QVERIFY(!token.isEmpty());

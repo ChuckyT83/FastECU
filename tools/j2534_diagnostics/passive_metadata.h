@@ -35,6 +35,16 @@ inline QJsonObject fileInfo(const QString &path) {
     if(length && length<=1024*1024) {
         std::vector<char> data(length);
         if(GetFileVersionInfoW(name.c_str(),0,length,data.data())) {
+            struct Translation {WORD language,codepage;};
+            Translation *translations=nullptr;UINT translationBytes=0;
+            if(VerQueryValueW(data.data(),L"\\VarFileInfo\\Translation",reinterpret_cast<void **>(&translations),&translationBytes) && translationBytes>=sizeof(Translation)) {
+                for(const auto &field:QVector<QPair<QString,QString>>{{"CompanyName","company_name"},{"ProductName","product_name"}}) {
+                    const auto key=QString("\\StringFileInfo\\%1%2\\%3").arg(translations[0].language,4,16,QChar('0')).arg(translations[0].codepage,4,16,QChar('0')).arg(field.first);
+                    wchar_t *value=nullptr;UINT chars=0;
+                    if(VerQueryValueW(data.data(),reinterpret_cast<LPCWSTR>(key.utf16()),reinterpret_cast<void **>(&value),&chars) && chars>0 && chars<4096)
+                        out[field.second]=QString::fromWCharArray(value,int(chars)-1);
+                }
+            }
             VS_FIXEDFILEINFO *fixed=nullptr;UINT count=0;
             if(VerQueryValueW(data.data(),L"\\",reinterpret_cast<void **>(&fixed),&count) &&
                 count>=sizeof(*fixed) && fixed->dwSignature==0xfeef04bd) {

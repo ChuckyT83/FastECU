@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include "operation_policy.h"
 #include "reviewed_openport.h"
+#include "../../serial_port/j2534_adapter_selection.h"
 #ifdef Q_OS_WIN
 #include "windows_device_api.h"
 #endif
@@ -35,15 +36,16 @@ static QString jobDirectory(const QString &token) {
     return QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("fastecu-device-"+token);
 }
 static QJsonObject isolatedDevice(const QString &driverId,const QString &kind,const QString &hash,
-                                  const QString &trace,int timeout,bool custom=false) {
+                                  const QString &trace,int timeout,bool custom=false,bool manager=false) {
     const auto token=QUuid::createUuid().toString(QUuid::Id128);
     const auto directory=jobDirectory(token);
     QJsonObject report{{"ok",false},{"validation_level","device_call_not_started"}};
     if(!QDir().mkdir(directory)){report["error"]="Unable to create private worker output directory";return report;}
     QProcess worker;
     worker.setProgram(QCoreApplication::applicationFilePath());
-    QStringList arguments{"--internal-worker",token,custom?"--qualify-openport-usb-only":"--validate-device",driverId,"--adapter-kind",kind,
+    QStringList arguments{"--internal-worker",token,manager?"--adapter-manager-test":custom?"--qualify-openport-usb-only":"--validate-device",driverId,"--adapter-kind",kind,
         "--driver-sha256",hash,"--vehicle-disconnected","--reviewed-open-behavior"};
+    if(manager)arguments=QStringList{"--internal-worker",token,"--adapter-manager-test",driverId,"--driver-sha256",hash};
     if(!trace.isEmpty())arguments<<"--trace"<<trace;
     worker.setArguments(arguments);
     worker.setStandardOutputFile(QDir(directory).filePath("worker-output.txt"));
@@ -81,6 +83,8 @@ int main(int argc,char **argv) {
     QCommandLineParser parser;parser.addHelpOption();parser.addVersionOption();
     parser.addOption({"qualify-openport-usb-only","Reviewed hash-pinned custom x64 OpenPort USB lifecycle only (no channels/ECU)","absolute-dll"});
     parser.addOption({"validate-device","Explicit isolated USB-only open/version/close; reviewed OBDX driver only","id"});
+    parser.addOption({"adapter-manager-list","Internal GUI adapter discovery"});
+    parser.addOption({"adapter-manager-test","Internal GUI USB lifecycle test", "path"});
     parser.addOption({"adapter-kind","obdx-pro-vx, reviewed-custom-openport (separate qualification mode), openport-clone, or unreviewed","kind","unreviewed"});
     parser.addOption({"vehicle-disconnected","Acknowledge adapter is physically disconnected from vehicle/ECU"});
     parser.addOption({"reviewed-open-behavior","Owner affirms independent review of this driver's open/firmware behavior; not verified by the tool"});
@@ -108,7 +112,7 @@ int main(int argc,char **argv) {
     report["source_working_tree_dirty"]=false;
 #endif
     report["stage"]="A_passive";report["validation_level"]="discovery_only";
-    const bool privateDetails=parser.isSet("include-private-details");
+    bool privateDetails=parser.isSet("include-private-details");
     const auto emitReport=[&](QJsonObject result,int code) {
         if(parser.isSet("internal-worker")) {
             const auto token=parser.value("internal-worker");
@@ -147,6 +151,46 @@ int main(int argc,char **argv) {
         }
         QTextStream(stdout)<<QJsonDocument(result).toJson(QJsonDocument::Indented);return code;
     };
+    if(parser.isSet("internal-worker")) {
+        const auto token=parser.value("internal-worker");
+        if(!QRegularExpression("^[a-f0-9]{32}$").match(token).hasMatch() || !QFileInfo(jobDirectory(token)).isDir())return 2;
+    }
+    const bool managerTest=parser.isSet("adapter-manager-test");
+    if(managerTest || parser.isSet("adapter-manager-list")) {
+        if(parser.isSet("validate-device") || parser.isSet("qualify-openport-usb-only") || parser.isSet("collect") || parser.isSet("inspect-file") || parser.isSet("identification-plan") ||
+           (managerTest && parser.isSet("adapter-manager-list"))) {
+            report["error"]="Adapter Manager refuses mixed operations";return emitReport(report,2);
+        }
+        const auto root=QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../..");
+        QJsonArray errors,entries;const auto adapters=J2534Adapters::enumerate(root,errors);
+        if(!managerTest) {
+            for(const auto &a:adapters)entries.append(a.json());
+            report["adapters"]=entries;report["registry_errors"]=errors;report["ok"]=true;
+            // Paths are machine-local internal selection keys, not a mandatory user export.
+            privateDetails=true;return emitReport(report,0);
+        }
+        J2534Adapters::Descriptor selected;bool found=false;
+        for(const auto &a:adapters)if(a.driver.path==parser.value("adapter-manager-test")){selected=a;found=true;break;}
+        if(!found || !selected.supported()) {report["error"]=found?selected.unavailable:"Adapter selection no longer available; refresh the list";return emitReport(report,2);}
+        report["adapter_label"]=selected.kind;
+        if(parser.isSet("internal-worker")) {
+            if(selected.hash!=parser.value("driver-sha256")){report["error"]="Driver changed after selection";return emitReport(report,2);}
+#ifdef Q_OS_WIN
+            WindowsDeviceApi api;api.pinHash(selected.hash);api.managerDiagnostics(selected.driver.path);
+            if(selected.kind=="reviewed-custom-openport")api.qualifyCustomOpenPort(QDir(jobDirectory(parser.value("internal-worker"))).filePath("driver-lifecycle.log"));
+            const auto result=validateDevice(selected.driver,true,true,api);
+            report["device_result"]=result;report["ok"]=result["ok"].toBool() && result["version_ok"].toBool();
+            report["device_opened"]=result.contains("device_handle");
+            if(!report["ok"].toBool())report["usb_pnp"]=usbInfo(true);
+#else
+            report["ok"]=false;report["error"]="Adapter testing requires native Windows";
+#endif
+        } else {
+            const auto result=isolatedDevice(selected.driver.path,selected.kind,selected.hash,QString(),15000,false,true);
+            report["device_result"]=result;report["ok"]=result["ok"].toBool();report["device_opened"]=result["device_opened"];
+        }
+        return emitReport(report,report["ok"].toBool()?0:1);
+    }
     const bool customRequest=parser.isSet("qualify-openport-usb-only");
     if(customRequest && (parser.isSet("validate-device") || parser.isSet("inspect-file") ||
        parser.isSet("collect") || parser.isSet("identification-plan") ||

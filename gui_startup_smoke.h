@@ -8,6 +8,7 @@
 #include <QWindow>
 #include <QXmlStreamReader>
 #include "mainwindow.h"
+#include "gui/j2534_adapter_manager.h"
 
 // Tests the shipping executable. This mode only removes capabilities: no remote
 // address, no device opening, no user input and a disposable, initially empty profile.
@@ -18,7 +19,7 @@ public:
     QString dialogError;
     bool eventFilter(QObject *object, QEvent *event) override {
         if (object == window && event->type() == QEvent::Paint) ++paints;
-        if (event->type() == QEvent::Show && qobject_cast<QDialog *>(object)) {
+        if (event->type() == QEvent::Show && qobject_cast<QDialog *>(object) && !qobject_cast<J2534AdapterManager *>(object)) {
             dialogError = QString("Unexpected startup dialog: ") + object->metaObject()->className();
             if (auto *box = qobject_cast<QMessageBox *>(object)) dialogError += ": " + box->text();
             qCritical().noquote() << dialogError; // Fail, never auto-accept a warning to pass.
@@ -65,9 +66,20 @@ inline int runGuiStartupSmoke(QApplication &app, const QString &output) {
         result["logger_definition_configured"] = window.property("startupLoggerDefinitionConfigured").toBool();
         window.setEnabled(false); // No interactive actions during the smoke.
         observer.window = &window;
+        const bool managerMenu=window.findChild<QAction *>("j2534_adapter_manager")!=nullptr;
+        result["adapter_manager_menu"]=managerMenu;
+        J2534AdapterController adapterController;
+        J2534AdapterManager adapterDialog(&adapterController,&window);
+        adapterDialog.setEnabled(false); // No discovery or device test in smoke mode.
         QTimer timer;
         QObject::connect(&timer, &QTimer::timeout, &window, [&] {
             ++heartbeats;
+            if (heartbeats == 7) adapterDialog.show();
+            if (heartbeats == 12) {
+                result["adapter_manager_visible"]=adapterDialog.isVisible();
+                result["adapter_manager_screenshot"]=adapterDialog.grab().save(output+".adapter.png");
+                adapterDialog.close();
+            }
             if (heartbeats < 20) return;
             result["window_visible"] = window.isVisible();
             result["window_exposed"] = window.windowHandle() && window.windowHandle()->isExposed();
@@ -77,6 +89,7 @@ inline int runGuiStartupSmoke(QApplication &app, const QString &output) {
             result["unexpected_dialog"] = observer.dialogError;
             const bool ready = window.isVisible() && window.windowHandle() && window.windowHandle()->isExposed()
                 && observer.paints > 0 && observer.dialogError.isEmpty()
+                && managerMenu && result["adapter_manager_visible"].toBool() && result["adapter_manager_screenshot"].toBool()
                 && result["protocol_count"].toInt() > 0 && result["logger_ready"].toBool();
             result["ready"] = ready;
             result["screenshot_saved"] = window.grab().save(output + ".png");

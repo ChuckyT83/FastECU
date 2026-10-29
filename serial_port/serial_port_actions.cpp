@@ -1142,6 +1142,7 @@ QStringList SerialPortActions::check_serial_ports()
 
 QString SerialPortActions::open_serial_port()
 {
+    if (QCoreApplication::instance() && QCoreApplication::instance()->property("j2534AdapterTestActive").toBool()) return {};
     if (isDirectConnection())
         return serial_direct->open_serial_port();
     else
