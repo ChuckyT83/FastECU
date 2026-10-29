@@ -12,6 +12,34 @@
      }
  
      // Send request and wait specified time for one response with unknown length
+@@ -99,6 +102,8 @@
+ 
+     @Override
+     public void close() {
++        RuntimeException originalFailure=null;
++        try {
+         if (stopRequest != null) {  // OBD has no open or close procedure
+             if (LOGGER.isDebugEnabled())
+                 LOGGER.debug(String.format("Stop Diagnostics Request  ---> %s",
+@@ -109,9 +114,15 @@
+                 LOGGER.debug(String.format("Stop Diagnostics Response <--- %s",
+                     asHex(response)));
+         }
+-        stopFcFilter();
+-        disconnectChannel();
+-        closeDevice();
++        } catch(RuntimeException failure) {
++            originalFailure=failure;
++        } finally {
++            stopFcFilter();
++            disconnectChannel();
++            closeDevice();
++            stopRequest=null;msgId=-1;channelId=-1;
++        }
++        if(originalFailure!=null)throw originalFailure;
+     }
+ 
+     private void initJ2534(int baudRate, String library) {
 --- a/com/romraider/io/j2534/api/J2534Impl.java
 +++ b/com/romraider/io/j2534/api/J2534Impl.java
 @@ -48,6 +48,8 @@
@@ -47,6 +75,15 @@
          PASSTHRU_MSG msg = passThruMessage(flag, data);
          if (LOGGER.isTraceEnabled())
              LOGGER.trace("Write Msg: " + toString(msg));
+@@ -1010,7 +1015,7 @@
+                     numMsg);
+                 throw new J2534Exception(errString);
+             }
+-            PASSTHRU_MSG[] msgs = doReadMsg(channelId, numMsg, timeout);  // num of msgs to read
++            PASSTHRU_MSG[] msgs = doReadMsg(channelId, numMsg, Math.max(1, end-currentTimeMillis()));  // num of msgs to read
+             for (PASSTHRU_MSG msg : msgs) {
+                 if (LOGGER.isTraceEnabled())
+                     LOGGER.trace("Read # Msg: " + toString(msg));
 @@ -1051,7 +1056,9 @@
                  null,
                  null
