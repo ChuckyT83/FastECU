@@ -9,7 +9,7 @@ Repairs: exact connection-response length before copying; returned count/metadat
 validation and bounded message arrays; SSM read opcode and exact address-byte
 count checks before assigning parameter responses. One narrowly scoped setup
 accommodation permits unsupported TX purge only for 3.0.0-logging.1 before any
-application message has been sent on a fresh channel. Active-channel purge errors
+application message has been sent on a fresh ISO15765 channel. Active-channel and K-Line purge errors
 remain errors. This is required because no verified adapter TX-purge command is
 available; the driver no longer falsely claims to perform one.
 

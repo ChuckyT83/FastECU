@@ -52,7 +52,7 @@
                  null
              );
 -        if (ret.intValue() != Status.NOERROR.getValue()) handleError(
-+        if(ret.intValue()==Status.ERR_NOT_SUPPORTED.getValue() && boundedCustomDriver && noWritesYet) {
++        if(ret.intValue()==Status.ERR_NOT_SUPPORTED.getValue() && boundedCustomDriver && noWritesYet && protocolID.intValue()==Protocol.ISO15765.getValue()) {
 +            LOGGER.warn("Reviewed custom driver has no confirmed adapter TX purge; fresh channel has transmitted no application messages");
 +        } else if(ret.intValue()!=Status.NOERROR.getValue()) handleError(
                  "PassThruIoctl (CLEAR_TX_BUFFER)", ret.intValue());

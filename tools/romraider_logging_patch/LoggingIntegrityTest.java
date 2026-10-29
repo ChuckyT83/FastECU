@@ -67,6 +67,7 @@ public class LoggingIntegrityTest {
         response[0]=Arrays.copyOf(payload,10);rejects(()->connection.send(new byte[]{1},received,state),"long response rejected");
         bridge.txStatus=1;set(impl,"boundedCustomDriver",true);set(impl,"noWritesYet",true);
         impl.clearBuffers(6);check(bridge.rxClears==1,"fresh reviewed channel RX clear");
+        set(impl,"protocolID",new NativeLong(3));rejects(()->impl.clearBuffers(6),"no K-Line purge fallback");set(impl,"protocolID",new NativeLong(6));
         set(impl,"noWritesYet",false);rejects(()->impl.clearBuffers(6),"no active-channel TX-purge fallback");
         final byte[][] values=new byte[4][];
         java.util.List<com.romraider.logger.ecu.comms.query.EcuQuery> queries=new ArrayList<>();
