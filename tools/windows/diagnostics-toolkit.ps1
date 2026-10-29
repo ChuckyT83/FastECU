@@ -14,7 +14,11 @@ function Invoke-Kit {
     & $File @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $logs "$Name.log")
     $code=$LASTEXITCODE
     if($code -ne $Expected) {
-        $tail=(Get-Content (Join-Path $logs "$Name.log") | Select-Object -Last 12) -join "`n"
+        $console=Join-Path $logs "$Name.log"
+        $testResult=Join-Path $logs "$Name.txt"
+        $tail="No console output captured"
+        if(Test-Path $console){$tail=(Get-Content $console | Select-Object -Last 12) -join "`n"}
+        if(Test-Path $testResult){$tail=(Get-Content $testResult | Select-String 'FAIL!|failure location|Totals:' | Select-Object -Last 24) -join "`n"}
         $message=($Name+" exit "+$code+"`n"+$tail)
         if($message.Length -gt 3000){$message=$message.Substring($message.Length-3000)}
         $message=$message.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
