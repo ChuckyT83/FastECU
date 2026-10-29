@@ -38,15 +38,23 @@ private slots:
         QVERIFY(dialog.findChild<QLabel*>("adapterStatus")->text().contains("dependency missing"));
     }
     void duplicateTestIsNotStarted() {
-        J2534AdapterController c;QSignalSpy changes(&c,&J2534AdapterController::changed);
+        J2534AdapterController c(nullptr,QCoreApplication::applicationFilePath());QSignalSpy changes(&c,&J2534AdapterController::changed);
         c.test("first");QVERIFY(c.busy());const int before=changes.count();
         c.test("second");QCOMPARE(changes.count(),before);
-        QTRY_VERIFY(!c.busy()); // Missing test-local helper fails to start, no driver loaded.
+        QTRY_VERIFY(!c.busy()); // Synthetic helper returns without loading any driver.
     }
     void activeTransportBlocksTesting() {
         J2534AdapterController c;c.transportBusy=[] {return true;};c.test("unused");
         QVERIFY(!c.busy());QVERIFY(c.lastReport["error"].toString().contains("already owns"));
     }
 };
-QTEST_MAIN(AdapterGuiTest)
+int main(int argc,char **argv) {
+    QApplication app(argc,argv);
+    if(app.arguments().contains("--adapter-manager-test")) {
+        QThread::msleep(250);
+        QTextStream(stdout)<<"{\"ok\":true}";
+        return 0;
+    }
+    AdapterGuiTest test;return QTest::qExec(&test,argc,argv);
+}
 #include "adapter_gui.moc"

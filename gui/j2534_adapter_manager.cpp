@@ -8,7 +8,7 @@
 #include <QSettings>
 #include <QSignalBlocker>
 
-J2534AdapterController::J2534AdapterController(QObject *parent):QObject(parent) {
+J2534AdapterController::J2534AdapterController(QObject *parent,const QString &program):QObject(parent),helper(program.isEmpty()?QDir(QCoreApplication::applicationDirPath()).filePath("diagnostics/x64/fastecu-j2534-diagnostics.exe"):program) {
     connect(&process,QOverload<int,QProcess::ExitStatus>::of(&QProcess::finished),this,[this](int,QProcess::ExitStatus){finish();});
     connect(&process,&QProcess::errorOccurred,this,[this](QProcess::ProcessError error){
         if(error!=QProcess::FailedToStart)return;
@@ -26,7 +26,7 @@ J2534AdapterController::J2534AdapterController(QObject *parent):QObject(parent) 
 void J2534AdapterController::launch(const QStringList &args,const QString &mode) {
     if(active)return;
     active=true;operation=mode;
-    process.setProgram(QDir(QCoreApplication::applicationDirPath()).filePath("diagnostics/x64/fastecu-j2534-diagnostics.exe"));
+    process.setProgram(helper);
     process.setArguments(args);process.start();watchdog.start();emit changed();
 }
 void J2534AdapterController::refresh() {if(!busy())launch({"--adapter-manager-list"},"list");}

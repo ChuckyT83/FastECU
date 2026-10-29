@@ -17,7 +17,7 @@
 class J2534AdapterController : public QObject {
     Q_OBJECT
 public:
-    explicit J2534AdapterController(QObject *parent=nullptr);
+    explicit J2534AdapterController(QObject *parent=nullptr,const QString &helper=QString());
     bool busy() const {return active || uncertain;}
     QJsonArray adapters;QJsonObject lastReport;
     void refresh();
@@ -26,7 +26,7 @@ public:
 signals:
     void changed();
 private:
-    QProcess process;QTimer watchdog,collection;
+    QString helper;QProcess process;QTimer watchdog,collection;
     bool active=false,uncertain=false;QString operation,token;
     void launch(const QStringList &arguments,const QString &mode);
     void finish();
