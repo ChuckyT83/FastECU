@@ -1,0 +1,18 @@
+{
+  "upstream_repository": "https://github.com/NikolaKozina/j2534",
+  "upstream_revision": "22ae8e85aa421dd74b2a3678bd9bf0f0db8ff55a",
+  "derivative": "USBQUAL/1; lifecycle-only correction, no CAN/flashing qualification",
+  "source_sha256": {
+    "j2534/j2534.c": "8d2ea24fa0d279f1ebdd30164b9e3f8e3985f2be85693592a9868bce3bda2794",
+    "j2534/j2534.h": "837ea56e841359beb38c12037c6f88431a5fd6a332bf40cbf611705d59907f35",
+    "j2534.def": "8db2e801a34226bb9c39635aa67b96cd11758c907af2effff38e354acc69c49d",
+    "tests/mock_connection.c": "631ae008cbf5a686debbc645bff837f52c354619fa2c4bcb42cba480cd3872fa",
+    "tests/abi-x64.c": "9790ed50af94a7c611305e9c39dc97dfb44f3344efb4a9f0e37f7b2c9f13a99f",
+    "LICENSE": "4a165f4dbdcfa96488a19af37430f098973d95fa4a2181ac753d9ed7c0d4f696",
+    ".gitattributes": "fcabdd740511833ea71a8b224fc031599dec86b932581fb6a2fd16bc93a010b5",
+    "build.py": "366c4098446344f583fce3efef12c6fe912341d851310d4c7a1730ed8dda45fb"
+  },
+  "libusb_version": "1.0.29",
+  "libusb_archive_sha256": "964a38152ca9a104cd00ec8d2f0617b89cd814f9b635e29763c68563d951521d",
+  "libusb_dll_sha256": "5f9b026847dadff2ee0891e1b6b607cd9a5e89eef4fadef17a25c72e781d5a3c"
+}

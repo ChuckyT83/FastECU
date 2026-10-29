@@ -1,7 +1,7 @@
 #Requires -Version 7.2
 # Native offline tests and standalone Qt Core-only diagnostic packaging.
 [CmdletBinding()]
-param([ValidateSet('x64','x86')][string]$Architecture='x64', [string]$BuildDirectory='build-diagnostics-x64')
+param([ValidateSet('x64','x86')][string]$Architecture='x64', [string]$BuildDirectory='build-diagnostics-x64', [string]$ReviewedOpenPortSHA256='')
 $ErrorActionPreference='Stop'
 if (-not $IsWindows) { throw 'Native Windows is required; this is not a cross-build validation' }
 $PSNativeCommandUseErrorActionPreference=$false
@@ -46,8 +46,13 @@ $tool=Join-Path $build 'tool'
 $testTool=Join-Path $build 'test-tool'
 $unit=Join-Path $build 'unit'
 $cli=Join-Path $build 'cli'
-Build-Target $tool 'tools/j2534_diagnostics/diagnostics.pro'
-Build-Target $testTool 'tools/j2534_diagnostics/diagnostics.pro' @('CONFIG+=diagnostic_test')
+$reviewedExtra=@()
+if($ReviewedOpenPortSHA256){
+    if($ReviewedOpenPortSHA256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'Invalid reviewed OpenPort hash'}
+    $reviewedExtra+="REVIEWED_OPENPORT_SHA256=$ReviewedOpenPortSHA256"
+}
+Build-Target $tool 'tools/j2534_diagnostics/diagnostics.pro' $reviewedExtra
+Build-Target $testTool 'tools/j2534_diagnostics/diagnostics.pro' (@('CONFIG+=diagnostic_test')+$reviewedExtra)
 Build-Target $unit 'tests/j2534/diagnostics.pro'
 Build-Target $cli 'tests/j2534/diagnostic_cli.pro'
 $mock=Join-Path $source 'tests/j2534/mock_dll.cpp'
@@ -60,20 +65,27 @@ try {
         @{Name='open-error-j2534.dll';Define='MOCK_OPEN_FAILURE'},
         @{Name='version-error-j2534.dll';Define='MOCK_VERSION_FAILURE'},
         @{Name='close-error-j2534.dll';Define='MOCK_CLOSE_FAILURE'},
-        @{Name='delayed-j2534.dll';Define='MOCK_OPEN_DELAY_MS=500'})
+        @{Name='delayed-j2534.dll';Define='MOCK_OPEN_DELAY_MS=500'},
+        @{Name='usbqual-j2534.dll';Define='MOCK_USBQUAL'},
+        @{Name='usbqual-no-ack.dll';Define='MOCK_USBQUAL -DMOCK_USBQUAL_NO_ACK'},
+        @{Name='usbqual-unavailable.dll';Define='MOCK_USBQUAL -DMOCK_USBQUAL_UNAVAILABLE'},
+        @{Name='usbqual-release-failure.dll';Define='MOCK_USBQUAL -DMOCK_USBQUAL_RELEASE_FAILURE'},
+        @{Name='usbqual-delayed.dll';Define='MOCK_USBQUAL -DMOCK_OPEN_DELAY_MS=500'})
     foreach($v in $variants) {
         $arguments=@('-std=c++11','-O2','-shared',$mock,'-o',$v.Name)
         if($Architecture -eq 'x86'){$arguments+='-Wl,--kill-at'}
-        if($v.Define){$arguments+="-D$($v.Define)"}
+        if($v.Define){$arguments+=("-D$($v.Define)" -split " ")}
         Invoke-Kit "mock-$($v.Name)" 'g++.exe' $arguments
         Copy-Item $v.Name $cli -Force
     }
+    Copy-Item 'mock-j2534.dll' (Join-Path $cli 'libusb-1.0.dll') -Force
     Invoke-Kit 'unit-results' (Join-Path $unit 'j2534-diagnostics-tests.exe') @('-o',"$(Join-Path $logs 'unit-results.txt'),txt",'-o','-,txt')
 } finally {Pop-Location}
 $env:FASTECU_DIAGNOSTIC_TOOL=Join-Path $testTool 'fastecu-j2534-diagnostics.exe'
+$env:FASTECU_DIAGNOSTIC_PRODUCTION_TOOL=Join-Path $tool 'fastecu-j2534-diagnostics.exe'
 Push-Location $cli
 try {Invoke-Kit 'cli-results' (Join-Path $cli 'j2534-diagnostic-cli-tests.exe') @('-o',"$(Join-Path $logs 'cli-results.txt'),txt",'-o','-,txt')}
-finally {Pop-Location;Remove-Item Env:FASTECU_DIAGNOSTIC_TOOL -ErrorAction SilentlyContinue}
+finally {Pop-Location;Remove-Item Env:FASTECU_DIAGNOSTIC_TOOL -ErrorAction SilentlyContinue;Remove-Item Env:FASTECU_DIAGNOSTIC_PRODUCTION_TOOL -ErrorAction SilentlyContinue}
 $package=Join-Path $build 'package'
 New-Item -ItemType Directory -Force $package | Out-Null
 Copy-Item (Join-Path $tool 'fastecu-j2534-diagnostics.exe') $package
@@ -91,14 +103,16 @@ foreach($candidate in @((Join-Path $compiler '../share/licenses'),(Join-Path $co
     if(Test-Path $candidate){Copy-Item $candidate $notices -Recurse -Force}
 }
 Copy-Item (Join-Path $source 'docs/diagnostic-runtime-notices.md') $notices
-foreach($document in @('adapter-arrival-checklist.md','j2534-diagnostic-command-reference.md','adapter-diagnostics-troubleshooting.md','sh7058-identification-preflight.md')) {
+foreach($document in @('adapter-arrival-checklist.md','j2534-diagnostic-command-reference.md','adapter-diagnostics-troubleshooting.md','sh7058-identification-preflight.md','openport-usb-qualification.md')) {
     Copy-Item (Join-Path $source "docs/$document") $package
 }
 Copy-Item (Join-Path $PSScriptRoot 'collect-adapter-diagnostics.ps1') $package
 @'
 DEVICE-ONLY DIAGNOSTICS — NOT A VEHICLE-READY FLASHER
 Passive inspection is the default. No vehicle connection or firmware update.
-Clone/OpenPort device calls are blocked pending Task 007.
+General clone/OpenPort device calls remain blocked. A separately named USBQUAL/1
+mode admits only the exact reviewed custom x64 DLL/dependency hashes; see the
+USB qualification CMD guide. No physical test is part of this build.
 OBDX calls require a separately reviewed driver, exact hash, explicit firmware-
 behavior review and vehicle-disconnected acknowledgements. These are owner
 assertions, not proof of identity/compatibility. See the command reference.

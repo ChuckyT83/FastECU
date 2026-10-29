@@ -23,6 +23,13 @@ static long record(const char *op, unsigned long id) {
     if(const char *path=std::getenv("FASTECU_MOCK_TRACE_FILE")){if(FILE *out=std::fopen(path,"ab")){std::fprintf(out,"%s:%lu;",op,id);std::fclose(out);}}
     return failingOperation == op ? ERR_FAILED : failure;
 }
+#ifdef MOCK_USBQUAL
+static void lifecycle(const char *name,int value) {
+    if(const char *path=std::getenv("LOG_ENABLE"))if(FILE *out=std::fopen(path,"ab")) {
+        std::fprintf(out,"USBQUAL/1 %s=%d\n",name,value);std::fclose(out);
+    }
+}
+#endif
 EXPORT void PT_CALL MockReset() { failure = 0; failingOperation.clear(); trace.clear(); metadata = 0; device = 41; channel = 99; MockTransportReset(); }
 EXPORT void PT_CALL MockSetFailure(const char *op) { failingOperation = op; }
 EXPORT void PT_CALL MockSetHandles(unsigned long d, unsigned long c) { device = d; channel = c; }
@@ -37,13 +44,34 @@ EXPORT long PT_CALL PassThruOpen(const void*, unsigned long *id) {
 #ifdef MOCK_OPEN_FAILURE
     failingOperation="open";
 #endif
-    return record("open",0);
+    const auto status=record("open",0);
+#ifdef MOCK_USBQUAL
+    lifecycle("begin",1);
+    if(status==0) {
+        lifecycle("ati_ack",1);
+#ifndef MOCK_USBQUAL_NO_ACK
+        lifecycle("ata_ack",1);
+#endif
+        lifecycle("open_complete",1);
+    }
+#endif
+    return status;
 }
 EXPORT long PT_CALL PassThruClose(unsigned long id) {
 #ifdef MOCK_CLOSE_FAILURE
     failingOperation="close";
 #endif
-    return id==device?record("close",id):ERR_INVALID_DEVICE_ID;
+    auto status=id==device?record("close",id):ERR_INVALID_DEVICE_ID;
+#ifdef MOCK_USBQUAL
+    lifecycle("shutdown_ack",status==0?1:0);
+#ifdef MOCK_USBQUAL_RELEASE_FAILURE
+    lifecycle("release_status",-6);if(status==0)status=ERR_DEVICE_IN_USE;
+#else
+    lifecycle("release_status",0);
+#endif
+    lifecycle("handle_close_returned",1);lifecycle("context_exit_returned",1);lifecycle("close_status",int(status));
+#endif
+    return status;
 }
 EXPORT long PT_CALL PassThruConnect(unsigned long id, unsigned long, unsigned long, unsigned long, unsigned long *out) { *out = channel; return id == device ? record("connect", id) : ERR_INVALID_DEVICE_ID; }
 EXPORT long PT_CALL PassThruDisconnect(unsigned long id) { return id == channel ? record("disconnect", id) : ERR_INVALID_CHANNEL_ID; }
@@ -69,7 +97,12 @@ EXPORT long PT_CALL PassThruReadVersion(unsigned long id, char *fw, char *dll, c
         for (char *p : {api, dll, fw}) memset(p, 'V', n);
         return 0;
     }
-    strcpy(fw, "9.8.7"); strcpy(dll, "1.2.3"); strcpy(api, "04.04"); return 0;
+#ifdef MOCK_USBQUAL_UNAVAILABLE
+    strcpy(fw,"unavailable");
+#else
+    strcpy(fw, "9.8.7");
+#endif
+    strcpy(dll, "1.2.3"); strcpy(api, "04.04"); return 0;
 }
 #endif
 EXPORT long PT_CALL PassThruGetLastError(char *text) { strcpy(text, "mock failure"); return 0; }

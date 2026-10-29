@@ -10,6 +10,7 @@
 #include <QUuid>
 #include <QRegularExpression>
 #include "operation_policy.h"
+#include "reviewed_openport.h"
 #ifdef Q_OS_WIN
 #include "windows_device_api.h"
 #endif
@@ -34,14 +35,14 @@ static QString jobDirectory(const QString &token) {
     return QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("fastecu-device-"+token);
 }
 static QJsonObject isolatedDevice(const QString &driverId,const QString &kind,const QString &hash,
-                                  const QString &trace,int timeout) {
+                                  const QString &trace,int timeout,bool custom=false) {
     const auto token=QUuid::createUuid().toString(QUuid::Id128);
     const auto directory=jobDirectory(token);
     QJsonObject report{{"ok",false},{"validation_level","device_call_not_started"}};
     if(!QDir().mkdir(directory)){report["error"]="Unable to create private worker output directory";return report;}
     QProcess worker;
     worker.setProgram(QCoreApplication::applicationFilePath());
-    QStringList arguments{"--internal-worker",token,"--validate-device",driverId,"--adapter-kind",kind,
+    QStringList arguments{"--internal-worker",token,custom?"--qualify-openport-usb-only":"--validate-device",driverId,"--adapter-kind",kind,
         "--driver-sha256",hash,"--vehicle-disconnected","--reviewed-open-behavior"};
     if(!trace.isEmpty())arguments<<"--trace"<<trace;
     worker.setArguments(arguments);
@@ -76,10 +77,11 @@ static QJsonObject isolatedDevice(const QString &driverId,const QString &kind,co
 }
 
 int main(int argc,char **argv) {
-    QCoreApplication app(argc,argv);app.setApplicationName("fastecu-j2534-diagnostics");app.setApplicationVersion("006P-1");
+    QCoreApplication app(argc,argv);app.setApplicationName("fastecu-j2534-diagnostics");app.setApplicationVersion("006P-1+usbqual.1");
     QCommandLineParser parser;parser.addHelpOption();parser.addVersionOption();
+    parser.addOption({"qualify-openport-usb-only","Reviewed hash-pinned custom x64 OpenPort USB lifecycle only (no channels/ECU)","absolute-dll"});
     parser.addOption({"validate-device","Explicit isolated USB-only open/version/close; reviewed OBDX driver only","id"});
-    parser.addOption({"adapter-kind","obdx-pro-vx, openport-clone, or unreviewed (default)","kind","unreviewed"});
+    parser.addOption({"adapter-kind","obdx-pro-vx, reviewed-custom-openport (separate qualification mode), openport-clone, or unreviewed","kind","unreviewed"});
     parser.addOption({"vehicle-disconnected","Acknowledge adapter is physically disconnected from vehicle/ECU"});
     parser.addOption({"reviewed-open-behavior","Owner affirms independent review of this driver's open/firmware behavior; not verified by the tool"});
     parser.addOption({"driver-sha256","Exact reviewed driver hash; selection integrity, not compatibility proof","sha256"});
@@ -99,6 +101,11 @@ int main(int argc,char **argv) {
     report["test_build"]=true;
 #else
     report["test_build"]=false;
+#endif
+#ifdef FASTECU_DIAGNOSTIC_DIRTY_TREE
+    report["source_working_tree_dirty"]=true;
+#else
+    report["source_working_tree_dirty"]=false;
 #endif
     report["stage"]="A_passive";report["validation_level"]="discovery_only";
     const bool privateDetails=parser.isSet("include-private-details");
@@ -140,6 +147,15 @@ int main(int argc,char **argv) {
         }
         QTextStream(stdout)<<QJsonDocument(result).toJson(QJsonDocument::Indented);return code;
     };
+    const bool customRequest=parser.isSet("qualify-openport-usb-only");
+    if(customRequest && (parser.isSet("validate-device") || parser.isSet("inspect-file") ||
+       parser.isSet("collect") || parser.isSet("identification-plan") ||
+       (parser.isSet("adapter-kind") && parser.value("adapter-kind")!="reviewed-custom-openport"))) {
+        report["error"]="Custom OpenPort mode cannot be combined with another operation or adapter identity";
+        return emitReport(report,2);
+    }
+    if(customRequest){report["adapter_label"]="reviewed-custom-openport";
+        report["reviewed_driver_sha256"]=reviewedOpenPortHash();report["reviewed_libusb_sha256"]=reviewedLibusbHash();}
     if(parser.isSet("identification-plan")){report["operation"]=identificationPlan();report["ok"]=false;return emitReport(report,2);}
     if(parser.isSet("inspect-file")) {
         Driver file;file.path=QFileInfo(parser.value("inspect-file")).absoluteFilePath();inspect(file,nativeMachine(),false);
@@ -155,14 +171,21 @@ int main(int argc,char **argv) {
         report["device_result"]=result;report["prior_parent_timeout"]=QFileInfo::exists(QDir(directory).filePath("parent-timeout.json"));
         report["ok"]=false;report["validation_level"]="review_required_late_result";return emitReport(report,1);
     }
-    QJsonArray registryErrors;const auto drivers=registeredDrivers(registryErrors);
+    QJsonArray registryErrors;const auto drivers=customRequest?QVector<Driver>():registeredDrivers(registryErrors);
     report["registry_errors"]=registryErrors;
-    if(parser.isSet("validate-device")) {
+    if(parser.isSet("validate-device") || customRequest) {
         report["stage"]="B_explicit_USB_only";report["ok"]=false;
         bool found=false;Driver selected;
-        for(const auto &d:drivers)if(d.id==parser.value("validate-device")){selected=d;found=true;break;}
+        if(customRequest) {
+            selected.path=parser.value("qualify-openport-usb-only");
+            selected.api="04.04";selected.id="reviewed-custom-openport-usb-only";
+            selected.description="Reviewed custom OpenPort USBQUAL/1";selected.manufacturer="Reviewed NikolaKozina derivative";
+            selected.view="x64";inspect(selected);found=true;
+        } else for(const auto &d:drivers)if(d.id==parser.value("validate-device")){selected=d;found=true;break;}
         if(!found){report["error"]="Selected driver ID not found; no DLL loaded";return emitReport(report,1);}
-        const auto policy=devicePolicy(selected,parser.value("adapter-kind"),parser.isSet("vehicle-disconnected"),parser.isSet("reviewed-open-behavior"),parser.value("driver-sha256"));
+        const auto policy=customRequest ? reviewedOpenPortPolicy(selected,parser.value("driver-sha256"),
+            parser.isSet("vehicle-disconnected"),parser.isSet("reviewed-open-behavior")) :
+            devicePolicy(selected,parser.value("adapter-kind"),parser.isSet("vehicle-disconnected"),parser.isSet("reviewed-open-behavior"),parser.value("driver-sha256"));
         if(!policy.isEmpty()){report["error"]=policy;return emitReport(report,2);}
         inspect(selected);
         if(!selected.issue.isEmpty()){report["error"]=selected.issue;return emitReport(report,1);}
@@ -174,7 +197,9 @@ int main(int argc,char **argv) {
             const auto token=parser.value("internal-worker");
             if(!QRegularExpression("^[a-f0-9]{32}$").match(token).hasMatch() || !QFileInfo(jobDirectory(token)).isDir())return 2;
 #ifdef Q_OS_WIN
-            WindowsDeviceApi api;api.pinHash(parser.value("driver-sha256"));J2534Trace trace;
+            WindowsDeviceApi api;api.pinHash(parser.value("driver-sha256"));
+            if(customRequest)api.qualifyCustomOpenPort(QDir(jobDirectory(token)).filePath("driver-lifecycle.log"));
+            J2534Trace trace;
             if(parser.isSet("trace"))trace.start(parser.value("trace"));
             const auto outcome=validateDevice(selected,true,true,api,&trace);trace.finish();
             report["device_result"]=outcome;report["trace_failed"]=trace.failed();
@@ -189,7 +214,7 @@ int main(int argc,char **argv) {
         bool number=false;const int wait=parser.value("wait-ms").toInt(&number);
         if(!number || wait<100 || wait>30000){report["error"]="wait-ms must be 100..30000; no driver called";return emitReport(report,2);}
         report["open_behavior_review"]="Owner attestation only; this tool cannot prove vendor initialization/firmware side effects or physical adapter identity.";
-        const auto outcome=isolatedDevice(selected.id,parser.value("adapter-kind"),parser.value("driver-sha256"),parser.value("trace"),wait);
+        const auto outcome=isolatedDevice(customRequest?selected.path:selected.id,customRequest?"reviewed-custom-openport":parser.value("adapter-kind"),parser.value("driver-sha256"),parser.value("trace"),wait,customRequest);
         report["device_result"]=outcome;report["ok"]=outcome["ok"].toBool();
         report["device_opened"]=outcome["device_opened"];
         report["validation_level"]=outcome["validation_level"];return emitReport(report,report["ok"].toBool()?0:1);

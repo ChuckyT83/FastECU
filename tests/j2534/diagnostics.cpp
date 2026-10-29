@@ -2,6 +2,7 @@
 #include <QTemporaryDir>
 #include <QLibrary>
 #include "../../tools/j2534_diagnostics/operation_policy.h"
+#include "../../tools/j2534_diagnostics/reviewed_openport.h"
 #include "../../serial_port/j2534_diagnostics.h"
 #ifdef Q_OS_WIN
 #include "../../tools/j2534_diagnostics/windows_device_api.h"
@@ -11,13 +12,18 @@ using namespace J2534Diagnostics;
 class FakeDevice : public DeviceOnlyApi {
 public:
     QStringList calls;
+    bool custom=false; QJsonObject evidence;
+    bool reviewedOpenPort() const override{return custom;}
+    QJsonObject lifecycleEvidence() const override{return evidence;}
     bool loadOk=true; long openStatus=0,versionStatus=0,closeStatus=0; int metadata=0;
     bool load(const QString &,QString &error) override {calls<<"load";error="Injected load failure";return loadOk;}
     long open(unsigned long &id) override{calls<<"open";id=0;return openStatus;}
     long version(unsigned long id,char *api,char *dll,char *fw) override {
         calls<<"version";Q_ASSERT(id==0);
-        if(metadata) {std::memset(api,'V',80);std::memset(dll,'V',80);std::memset(fw,'V',80);}
-        else {std::strcpy(api,"04.04");std::strcpy(dll,"synthetic");std::strcpy(fw,"synthetic");}return versionStatus;
+        if(metadata==3){std::strcpy(api,"04.04");std::strcpy(dll,"synthetic");std::strcpy(fw,"garbage");}
+        else if(metadata==2){std::strcpy(api,"04.04");std::strcpy(dll,"synthetic");std::strcpy(fw,"unavailable");}
+        else if(metadata) {std::memset(api,'V',80);std::memset(dll,'V',80);std::memset(fw,'V',80);}
+        else {std::strcpy(api,"04.04");std::strcpy(dll,"synthetic");std::strcpy(fw,custom?"1.17.4877":"synthetic");}return versionStatus;
     }
     long close(unsigned long id) override {calls<<"close";Q_ASSERT(id==0);return closeStatus;}
     void unload() override{calls<<"unload";}
@@ -115,6 +121,60 @@ private slots:
     }
     void devicePolicy() {QFETCH(QString,kind);QFETCH(bool,disconnected);QFETCH(bool,reviewed);QFETCH(QString,hash);QFETCH(bool,allowed);QCOMPARE(DiagnosticReport::devicePolicy(driver,kind,disconnected,reviewed,hash).isEmpty(),allowed);}
     void openPortAlwaysPassive() {driver.description="Tactrix OpenPort 2.0";QVERIFY(!DiagnosticReport::devicePolicy(driver,"obdx-pro-vx",true,true,QString(64,'a')).isEmpty());}
+    void customLifecycle_data() {
+        QTest::addColumn<QString>("fault");
+        for(const char *f:{"success","no-ati","no-ata","shutdown","release","handle","context","close-marker","unavailable","bad-firmware","version-failure","close-failure","version-and-close","open-failure"})QTest::newRow(f)<<QString(f);
+    }
+    void customLifecycle() {
+        QFETCH(QString,fault);FakeDevice api;api.custom=true;
+        QByteArray log="USBQUAL/1 begin=1\nUSBQUAL/1 ati_ack=1\nUSBQUAL/1 ata_ack=1\nUSBQUAL/1 open_complete=1\nUSBQUAL/1 shutdown_ack=1\nUSBQUAL/1 release_status=0\nUSBQUAL/1 handle_close_returned=1\nUSBQUAL/1 context_exit_returned=1\nUSBQUAL/1 close_status=0\n";
+        if(fault=="no-ati")log.replace("ati_ack=1","ati_ack=0");
+        if(fault=="no-ata")log.replace("ata_ack=1","ata_ack=0");
+        if(fault=="shutdown")log.replace("shutdown_ack=1","shutdown_ack=0");
+        if(fault=="release")log.replace("release_status=0","release_status=-6");
+        if(fault=="handle")log.replace("handle_close_returned=1","handle_close_returned=0");
+        if(fault=="context")log.replace("context_exit_returned=1","context_exit_returned=0");
+        if(fault=="close-marker")log.replace("close_status=0","close_status=9");
+        if(fault=="unavailable")api.metadata=2;
+        if(fault=="bad-firmware")api.metadata=3;
+        if(fault=="version-failure")api.versionStatus=7;
+        if(fault=="close-failure")api.closeStatus=9;
+        if(fault=="open-failure")api.openStatus=9;
+        if(fault=="version-and-close"){api.versionStatus=7;api.closeStatus=9;}
+        api.evidence=DiagnosticReport::openPortLifecycleEvidence(log);
+        const auto report=validateDevice(driver,true,true,api);
+        QCOMPARE(report["ok"].toBool(),fault=="success");
+        QCOMPARE(api.calls.count("open"),1);
+        QCOMPARE(api.calls.count("close"),fault=="open-failure"?0:1);
+        if(fault=="no-ati" || fault=="no-ata"){QVERIFY(!api.calls.contains("version"));QVERIFY(report["version_status"].isNull());}
+        if(fault=="version-and-close"){QCOMPARE(report["primary_error_stage"].toString(),QString("version"));QVERIFY(report.contains("cleanup_error"));}
+        QVERIFY(!report["ecu_communication"].toBool());QVERIFY(!report["channel_opened"].toBool());
+        if(fault=="shutdown" || fault=="release" || fault=="handle" || fault=="context")QVERIFY(!report["cleanup_confirmed"].toBool());
+    }
+    void malformedLifecycleEvidence() {
+        for(const auto &log:{QByteArray(),QByteArray("USBQUAL/1 begin=1\nUSBQUAL/1 begin=1\n"),QByteArray("USBQUAL/1 begin=garbage\n"),QByteArray(65537,'X')}) {
+            const auto evidence=DiagnosticReport::openPortLifecycleEvidence(log);
+            QVERIFY(!evidence["initialization_acknowledged"].toBool());
+            QVERIFY(!evidence["kernel_handle_release_independently_observed"].toBool());
+        }
+    }
+    void reviewedOpenPortPolicyIsNarrow() {
+        if(nativeMachine()!=0x8664)QSKIP("Reviewed OpenPort is x64 only");
+        const auto dependency=QFileInfo(driver.path).dir().filePath("libusb-1.0.dll");
+        QFile dep(dependency);QVERIFY(dep.open(QIODevice::WriteOnly));dep.write(pe(0x8664));dep.close();
+        const auto expected=DiagnosticReport::fileInfo(driver.path)["sha256"].toString();
+        const auto depHash=DiagnosticReport::fileInfo(dependency)["sha256"].toString();
+        qputenv("FASTECU_USBQUAL_TEST_HASH",expected.toLatin1());qputenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH",depHash.toLatin1());
+        J2534Diagnostics::inspect(driver);
+        QVERIFY2(DiagnosticReport::reviewedOpenPortPolicy(driver,expected,true,true).isEmpty(),qPrintable(DiagnosticReport::reviewedOpenPortPolicy(driver,expected,true,true)));
+        QVERIFY(!DiagnosticReport::reviewedOpenPortPolicy(driver,expected,false,true).isEmpty());
+        QVERIFY(!DiagnosticReport::reviewedOpenPortPolicy(driver,expected,true,false).isEmpty());
+        QVERIFY(!DiagnosticReport::reviewedOpenPortPolicy(driver,QString(64,'a'),true,true).isEmpty());
+        QVERIFY(!DiagnosticReport::devicePolicy(driver,"openport-clone",true,true,expected).isEmpty());
+        QVERIFY(dep.open(QIODevice::Append));dep.write("changed");dep.close();
+        QVERIFY(!DiagnosticReport::reviewedOpenPortPolicy(driver,expected,true,true).isEmpty());
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
     void identificationBlocked() {const auto plan=identificationPlan();QVERIFY(!plan["ok"].toBool());QVERIFY(!plan["ecu_communication"].toBool());QVERIFY(plan["allowed_requests"].toArray().isEmpty());}
     void sinkDisabled() {J2534Trace trace;QVERIFY(!trace.enabled());trace.record("test");QVERIFY(!trace.failed());}
     void sinkOversizedRecord() {

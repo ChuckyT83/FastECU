@@ -68,6 +68,16 @@ private slots:
         QVERIFY(again.contains("summary_export_error"));QVERIFY(f.open(QIODevice::ReadOnly));QCOMPARE(f.readAll(),original);
     }
     void missingFileSummary(){const auto r=run({"--inspect-file",directory.filePath("not-present.dll")});QCOMPARE(exitCode,1);QVERIFY(r["human_summary"].toString().contains("missing"));QVERIFY(!r["human_summary"].toString().contains(directory.path()));}
+    void customModeRejectsConflictingRequests() {
+        for(const auto &args:{QStringList{"--inspect-file","missing.dll"},QStringList{"--validate-device","x64:04.04:fake"},QStringList{"--adapter-kind","obdx-pro-vx"},QStringList{"--collect",QString(32,'a')}}) {
+            const auto r=run(QStringList{"--qualify-openport-usb-only","C:/missing.dll"}+args);
+            QCOMPARE(exitCode,2);QVERIFY(r["request_refused"].toBool());QVERIFY(!r["device_opened"].toBool());
+        }
+    }
+    void originalCustomDriverNotAdmitted() {
+        const auto r=run({"--qualify-openport-usb-only",directory.filePath("not-present.dll"),"--vehicle-disconnected","--reviewed-open-behavior","--driver-sha256","5db9cbce45baac236e2ee155062b74960adfdb29303c979868c39bcbfe806aa3"});
+        QCOMPARE(exitCode,2);QVERIFY(!r["device_opened"].toBool());
+    }
     void invalidCollectToken(){const auto r=run({"--collect","../outside"});QCOMPARE(exitCode,2);QVERIFY(r.contains("error"));}
 #ifdef Q_OS_WIN
     void emptyRegistry(){const auto r=run({});QCOMPARE(exitCode,0);QVERIFY(r["drivers"].toArray().isEmpty());QCOMPARE(r["status"].toString(),QString("no_drivers_registered"));QVERIFY(!r["device_opened"].toBool());QVERIFY(r["test_build"].toBool());QVERIFY(r["human_summary"].toString().contains("not installed/registered"));}
@@ -102,6 +112,54 @@ private slots:
     void wrongHashBlocked(){registration(mock());auto args=deviceArgs(mock());args[args.size()-1]=QString(64,'0');const auto r=run(args);QCOMPARE(exitCode,1);QVERIFY(r["error"].toString().contains("hash"));QVERIFY(!QFileInfo::exists(directory.filePath("trace.txt")));}
     void isolatedDevice_data(){QTest::addColumn<QString>("dll");QTest::addColumn<bool>("ok");QTest::newRow("normal")<<QString("mock-j2534.dll")<<true;QTest::newRow("open-error")<<QString("open-error-j2534.dll")<<false;QTest::newRow("version-error")<<QString("version-error-j2534.dll")<<false;QTest::newRow("close-error")<<QString("close-error-j2534.dll")<<false;QTest::newRow("missing-export")<<QString("incomplete-device-j2534.dll")<<false;}
     void isolatedDevice(){QFETCH(QString,dll);QFETCH(bool,ok);const auto file=mock(dll);QVERIFY(QFileInfo(file).exists());registration(file);const auto r=run(deviceArgs(file));QCOMPARE(exitCode,ok?0:1);QCOMPARE(r["ok"].toBool(),ok);const auto child=r["device_result"].toObject();QVERIFY(child["isolated_process"].toBool());QVERIFY(!child["ecu_communication"].toBool());const auto calls=child["device_result"].toObject();if(ok){QCOMPARE(calls["device_handle"].toString(),QString("41"));QVERIFY(calls["cleanup_confirmed"].toBool());QVERIFY(calls["version_ok"].toBool());}QFile trace(directory.filePath("trace.txt"));if(trace.open(QIODevice::ReadOnly)){const auto bytes=trace.readAll();QVERIFY(!bytes.contains("connect"));QVERIFY(!bytes.contains("filter"));QVERIFY(!bytes.contains("write"));QVERIFY(!bytes.contains("ioctl"));}}
+    QStringList customArgs(const QString &file) {
+        qputenv("FASTECU_USBQUAL_TEST_HASH",hash(file).toLatin1());
+        qputenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH",hash(mock("libusb-1.0.dll")).toLatin1());
+        return {"--qualify-openport-usb-only",file,"--driver-sha256",hash(file),"--vehicle-disconnected","--reviewed-open-behavior"};
+    }
+    void customUsbLifecycle_data() {
+        QTest::addColumn<QString>("dll");QTest::addColumn<bool>("ok");
+        QTest::newRow("acknowledged")<<QString("usbqual-j2534.dll")<<true;
+        QTest::newRow("missing-ack")<<QString("usbqual-no-ack.dll")<<false;
+        QTest::newRow("unavailable-firmware")<<QString("usbqual-unavailable.dll")<<false;
+        QTest::newRow("release-failed")<<QString("usbqual-release-failure.dll")<<false;
+    }
+    void customUsbLifecycle() {
+        if(sizeof(void*)!=8)QSKIP("Reviewed custom OpenPort is x64 only");
+        QFETCH(QString,dll);QFETCH(bool,ok);
+        const auto r=run(customArgs(mock(dll)));QCOMPARE(exitCode,ok?0:1);
+        QCOMPARE(r["ok"].toBool(),ok);const auto worker=r["device_result"].toObject();
+        QVERIFY(worker["isolated_process"].toBool());const auto result=worker["device_result"].toObject();
+        QVERIFY(!result["ecu_communication"].toBool());QVERIFY(!result["channel_opened"].toBool());
+        if(ok){QVERIFY(result["initialization_acknowledged"].toBool());QVERIFY(result["cleanup_confirmed"].toBool());}
+        if(dll.contains("no-ack"))QVERIFY(!result["version_called"].toBool());
+        if(dll.contains("release")){const auto life=result["lifecycle"].toObject();QVERIFY(life["adapter_shutdown_confirmed"].toBool());QVERIFY(!life["usb_interface_release_confirmed"].toBool());}
+        QFile trace(directory.filePath("trace.txt"));QVERIFY(trace.open(QIODevice::ReadOnly));const auto bytes=trace.readAll();
+        QCOMPARE(bytes.count("open:"),1);QCOMPARE(bytes.count("close:"),1);
+        for(const char *forbidden:{"connect:","filter:","write:","read:","config:","ioctl:","voltage:","periodic:"})QVERIFY(!bytes.contains(forbidden));
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
+    void customModeFixtureCannotOverrideProductionHash() {
+        if(sizeof(void*)!=8)QSKIP("Reviewed custom OpenPort is x64 only");
+        const auto production=qEnvironmentVariable("FASTECU_DIAGNOSTIC_PRODUCTION_TOOL");
+        QVERIFY2(!production.isEmpty(),"Native runner must supply the production executable for hash-override refusal");
+        const auto r=run(customArgs(mock("usbqual-j2534.dll")),production);
+        QCOMPARE(exitCode,2);QVERIFY(!r["device_opened"].toBool());
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
+    void customExclusivePendingWorker() {
+        if(sizeof(void*)!=8)QSKIP("Reviewed custom OpenPort is x64 only");
+        auto args=customArgs(mock("usbqual-delayed.dll"));args<<"--wait-ms"<<"100";
+        const auto pending=run(args);QCOMPARE(exitCode,1);
+        const auto child=pending["device_result"].toObject();QVERIFY(!child["worker_terminated"].toBool());
+        const auto token=child["worker_result_token"].toString();QVERIFY(!token.isEmpty());
+        const auto second=run(customArgs(mock("usbqual-delayed.dll")));QCOMPARE(exitCode,1);
+        QVERIFY(!second["device_opened"].toBool());
+        const auto result=QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath("fastecu-device-"+token+"/result.json");
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(result),5000);
+        const auto late=run({"--collect",token});QCOMPARE(exitCode,1);QVERIFY(late["prior_parent_timeout"].toBool());
+        qunsetenv("FASTECU_USBQUAL_TEST_HASH");qunsetenv("FASTECU_USBQUAL_TEST_DEPENDENCY_HASH");
+    }
     void pendingCallNotTerminated(){
         const auto file=mock("delayed-j2534.dll");registration(file);auto args=deviceArgs(file);args<<"--wait-ms"<<"100";
         const auto r=run(args);QCOMPARE(exitCode,1);const auto pending=r["device_result"].toObject();QVERIFY(!pending["worker_terminated"].toBool());QCOMPARE(pending["validation_level"].toString(),QString("device_call_pending_or_uncertain"));const auto token=pending["worker_result_token"].toString();QVERIFY(!token.isEmpty());

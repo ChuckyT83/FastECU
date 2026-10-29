@@ -107,3 +107,12 @@ upstream source/license information is available from:
 Build evidence records the exact FastECU revision, compiler/Qt configuration,
 artifact digest and per-file SHA-256 manifest. No vendor driver, proprietary
 EcuFlash software, standalone firmware or calibration image is redistributed.
+
+## Separately reviewed custom OpenPort qualification
+
+The new `--qualify-openport-usb-only <absolute-dll>` mode is separate from the
+general OBDX-only `--validate-device` policy above. It admits only its compiled
+reviewed x64 driver hash and pinned libusb dependency; generic clones, original
+custom builds and proprietary Tactrix DLLs remain refused. See
+[USB qualification and CMD instructions](openport-usb-qualification.md). No
+physical test is authorized by building or packaging this mode.

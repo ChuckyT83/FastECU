@@ -11,6 +11,7 @@ inline QString humanSummary(const QJsonObject &r) {
           << ("Process architecture: " + r["process_architecture"].toString())
           << ("Stage: " + r["stage"].toString());
     if (r["request_refused"].toBool()) lines << "Request REFUSED; review the reason below. No programming permission.";
+    else if(r["ok"].toBool() && r["adapter_label"]=="reviewed-custom-openport") lines << "Reviewed USB-only lifecycle completed; vehicle/CAN/flashing remain UNTESTED.";
     else if (r["ok"].toBool()) lines << "Requested inspection/operation completed; hardware compatibility remains UNTESTED.";
     else lines << "Inspection/operation failed or remains uncertain; review JSON details.";
     if (r.contains("drivers")) {
@@ -38,6 +39,24 @@ inline QString humanSummary(const QJsonObject &r) {
         if (r.contains(key)) lines << (QString(key) + ": " + r[key].toString());
     if (!r["registry_errors"].toArray().isEmpty()) lines << "Registry inspection incomplete; see registry_errors in JSON.";
     if (r.contains("pe")) lines << ("File inspection: " + r["pe"].toObject()["issue"].toString());
+    if(r["adapter_label"]=="reviewed-custom-openport" && r.contains("device_result")) {
+        auto device=r["device_result"].toObject();
+        for(int depth=0;depth<4 && !device.contains("open_status") && device.contains("device_result");++depth)
+            device=device["device_result"].toObject();
+        if(device.contains("open_status")) {
+            const auto state=[](bool value){return value?QString("confirmed by reviewed driver evidence"):QString("NOT confirmed");};
+            const auto life=device["lifecycle"].toObject();
+            lines << "Reviewed custom OpenPort USB-only lifecycle (no vehicle calls):"
+                  << ("  Initialization acknowledgment: "+state(device["initialization_acknowledged"].toBool()))
+                  << ("  Usable version metadata: "+state(device["version_ok"].toBool()))
+                  << ("  Adapter shutdown acknowledgment: "+state(life["adapter_shutdown_confirmed"].toBool()))
+                  << ("  USB interface release: "+state(life["usb_interface_release_confirmed"].toBool()))
+                  << ("  Void handle-close call returned: "+state(life["usb_handle_close_returned"].toBool()))
+                  << "  Windows kernel-handle release: not independently observed; do not infer it from a void return.";
+            for(const auto &key:{"error","cleanup_error","driver_error_detail","close_error_detail"})
+                if(device.contains(key))lines << ("  "+QString(key)+": "+device[key].toString());
+        }
+    }
     lines << "No ECU/vehicle compatibility or programming authorization is established. Review JSON before sharing.";
     return lines.join('\n') + '\n';
 }

@@ -1,0 +1,89 @@
+name: Reviewed custom OpenPort USB-only qualification build
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/subaru-sh7058-communication-reliability]
+    paths:
+      - 'tools/openport_usb_driver/**'
+      - 'tools/j2534_diagnostics/**'
+      - 'tools/windows/diagnostics-toolkit.ps1'
+      - 'serial_port/j2534_diagnostics.h'
+      - 'tests/j2534/**'
+      - '.github/workflows/openport-usb-qualification.yml'
+permissions:
+  contents: read
+jobs:
+  native-windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Install Qt Core SDK and matching native x64 MinGW
+        uses: jurplel/install-qt-action/action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '5.15.2'
+          host: windows
+          target: desktop
+          arch: win64_mingw81
+          archives: qtbase qttools
+          tools: 'tools_mingw,qt.tools.win64_mingw810'
+          aqtversion: '==3.3.0'
+          py7zrversion: '==1.0.0'
+          cache: false
+      - name: Build reviewed driver and execute fake-USB tests only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $qt=(& qmake.exe -query QT_INSTALL_PREFIX).Trim()
+          $compiler=Join-Path (Split-Path (Split-Path $qt)) 'Tools/mingw810_64/bin'
+          $env:PATH="$compiler;$env:PATH"
+          New-Item -ItemType Directory -Force build-openport-usb | Out-Null
+          Invoke-WebRequest 'https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.7z' -OutFile build-openport-usb/libusb.7z
+          if((Get-FileHash build-openport-usb/libusb.7z -Algorithm SHA256).Hash.ToLowerInvariant() -ne '964a38152ca9a104cd00ec8d2f0617b89cd814f9b635e29763c68563d951521d'){throw 'Unexpected libusb archive'}
+          & 7z.exe x -y -obuild-openport-usb/libusb build-openport-usb/libusb.7z
+          if($LASTEXITCODE){throw 'libusb extraction failed'}
+          & python tools/openport_usb_driver/build.py --cc gcc --libusb build-openport-usb/libusb --output build-openport-usb/driver-build --native-mocks
+          if($LASTEXITCODE){throw 'Driver build/fake USB tests failed'}
+      - name: Run native diagnostic regression suites and package separate artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $manifest=Get-Content build-openport-usb/driver-build/build-manifest.json -Raw | ConvertFrom-Json
+          & ./tools/windows/diagnostics-toolkit.ps1 -Architecture x64 -BuildDirectory build-openport-usb/diagnostics -ReviewedOpenPortSHA256 $manifest.j2534_dll_sha256
+          if($LASTEXITCODE){throw 'Native diagnostic suite failed'}
+          $package='build-openport-usb/driver-package'
+          New-Item -ItemType Directory -Force $package | Out-Null
+          Copy-Item build-openport-usb/driver-build/j2534.dll,build-openport-usb/driver-build/libusb-1.0.dll,build-openport-usb/driver-build/LICENSE-driver,build-openport-usb/driver-build/DRIVER_SHA256.txt,build-openport-usb/driver-build/build-manifest.json $package
+          Copy-Item docs/openport-usb-qualification.md $package
+          Copy-Item docs/openport-usb-qualification.md build-openport-usb/diagnostics/package
+          # Retain dependency source alongside its redistributed DLL (LGPL).
+          Invoke-WebRequest 'https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.tar.bz2' -OutFile "$package/libusb-1.0.29.tar.bz2"
+          if((Get-FileHash "$package/libusb-1.0.29.tar.bz2" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5977fc950f8d1395ccea9bd48c06b3f808fd3c2c961b44b0c2e6e29fc3a70a85'){throw 'Unexpected libusb source'}
+          & python -c "import tarfile,pathlib; p=pathlib.Path('build-openport-usb/driver-package'); t=tarfile.open(p/'libusb-1.0.29.tar.bz2'); (p/'LICENSE-libusb').write_bytes(t.extractfile('libusb-1.0.29/COPYING').read())"
+          if($LASTEXITCODE){throw 'libusb license extraction failed'}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: openport-usb-native-evidence-${{ github.sha }}
+          path: |
+            build-openport-usb/driver-build/build-manifest.json
+            build-openport-usb/driver-build/fake-usb-results.json
+            build-openport-usb/diagnostics/logs/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: reviewed-openport-usb-driver-x64-${{ github.sha }}
+          path: build-openport-usb/driver-package/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: reviewed-openport-usb-diagnostics-x64-${{ github.sha }}
+          path: build-openport-usb/diagnostics/package/
+          retention-days: 14

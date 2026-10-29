@@ -9,3 +9,5 @@ win32 {
     HEADERS += ../../tools/j2534_diagnostics/windows_device_api.h
     LIBS += -lwintrust -lversion -lsetupapi -lcfgmgr32 -lcrypt32 -ladvapi32
 }
+
+DEFINES += FASTECU_DIAGNOSTICS_TEST_BUILD

@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QSysInfo>
 #include <QElapsedTimer>
+#include <QRegularExpression>
 #include <QVector>
 #include <cstring>
 #include <vector>
@@ -102,6 +103,10 @@ public:
     virtual long close(unsigned long device)=0;
     virtual void unload()=0;
     virtual QJsonObject loaderDiagnostics() const {return {};}
+    virtual bool reviewedOpenPort() const {return false;}
+    virtual QJsonObject lifecycleEvidence() const {return {};}
+    virtual QString failureDetail() {return {};}
+
 };
 inline QJsonObject validateDevice(Driver driver,bool explicitRequest,bool vehicleDisconnected,DeviceOnlyApi &api,J2534Trace *trace=nullptr) {
     QJsonObject report{{"driver",driver.json()},{"validation_level","discovery_only"},{"ok",false},
@@ -121,36 +126,67 @@ inline QJsonObject validateDevice(Driver driver,bool explicitRequest,bool vehicl
     QElapsedTimer elapsed;elapsed.start();
     const long opened=api.open(id);report["open_elapsed_ms"]=elapsed.elapsed();report["open_status"]=qint64(opened);
     if(trace)trace->record("PassThruOpen",{{"status",qint64(opened)},{"validation_level","device_only"}});
-    if(opened!=0) {report["error"]="PassThruOpen failed";api.unload();report["loader"]=api.loaderDiagnostics();if(trace)trace->record("dll_unload");return report;}
+    if(opened!=0) {report["error"]="PassThruOpen failed";report["driver_error_detail"]=api.failureDetail();report["lifecycle"]=api.lifecycleEvidence();api.unload();report["loader"]=api.loaderDiagnostics();if(trace)trace->record("dll_unload");return report;}
     report["device_handle"]=QString::number(id);
+    const auto initialization=api.lifecycleEvidence();
+    const bool handshakeValid=!api.reviewedOpenPort() || initialization["initialization_acknowledged"].toBool();
+    report["initialization_acknowledged"]=api.reviewedOpenPort()?QJsonValue(handshakeValid):QJsonValue();
     char apiVersion[256]={},dll[256]={},firmware[256]={};
     elapsed.restart();
-    const long version=api.version(id,apiVersion,dll,firmware);report["version_elapsed_ms"]=elapsed.elapsed();report["version_status"]=qint64(version);
+    const long version=handshakeValid?api.version(id,apiVersion,dll,firmware):7;
+    report["version_called"]=handshakeValid;
+    report["version_elapsed_ms"]=handshakeValid?QJsonValue(elapsed.elapsed()):QJsonValue();report["version_status"]=handshakeValid?QJsonValue(qint64(version)):QJsonValue();
     bool metadataValid=version==0;
     if(version==0) {
         const char *names[]={"api_version","dll_version","firmware_version"};const char *values[]={apiVersion,dll,firmware};
         for(int i=0;i<3;++i) {
             if(std::memchr(values[i],0,80)) {
                 report[names[i]]=QString::fromLatin1(values[i]);
-                if(!values[i][0]){metadataValid=false;report["metadata_warning"]="Driver version response is empty";}
+                if(!values[i][0] || QString::fromLatin1(values[i]).trimmed().isEmpty() ||
+                   QString::fromLatin1(values[i]).trimmed().compare("unavailable",Qt::CaseInsensitive)==0) {
+                    metadataValid=false;report["metadata_warning"]="Driver version response is empty or unavailable";
+                }
             }
             else {metadataValid=false;report["metadata_warning"]="Driver version response is unterminated";}
         }
-    } else report["metadata_warning"]="PassThruReadVersion unsupported or failed; device open is distinct from metadata";
-    if(trace)trace->record("PassThruReadVersion",{{"status",qint64(version)},
+    } else {report["metadata_warning"]="PassThruReadVersion unsupported/failed, or skipped because initialization was unconfirmed";if(handshakeValid)report["driver_error_detail"]=api.failureDetail();}
+    if(trace && handshakeValid)trace->record("PassThruReadVersion",{{"status",qint64(version)},
         {"api_version",report["api_version"]},{"dll_version",report["dll_version"]},{"firmware_version",report["firmware_version"]}});
     if(metadataValid && report["api_version"].toString()!=driver.api) {
         metadataValid=false;report["metadata_warning"]="Reported API version differs from registered 04.04; review required";
     }
+    if(api.reviewedOpenPort() && metadataValid &&
+       !QRegularExpression("^[0-9]+(\\.[0-9]+){1,3}$").match(report["firmware_version"].toString()).hasMatch()) {
+        metadataValid=false;report["metadata_warning"]="Custom adapter firmware version is not a plausible dotted numeric version";
+    }
     report["version_ok"]=metadataValid;
+    if(api.reviewedOpenPort() && (!handshakeValid || !metadataValid)) {
+        report["primary_error_stage"]=handshakeValid?"version":"initialization_evidence";
+        report["error"]=handshakeValid?"Version retrieval failed or returned unusable metadata":"Initialization acknowledgment evidence missing; version call skipped";
+    }
     elapsed.restart();
     const long closed=api.close(id);report["close_elapsed_ms"]=elapsed.elapsed();report["close_status"]=qint64(closed);
     if(trace)trace->record("PassThruClose",{{"status",qint64(closed)},{"validation_level","device_only"}});
-    api.unload();if(trace)trace->record("dll_unload");report["cleanup_confirmed"]=closed==0;
+    if(closed!=0)report["close_error_detail"]=api.failureDetail();
+    const bool custom=api.reviewedOpenPort();
+    const auto lifecycle=api.lifecycleEvidence();
+    if(custom)report["lifecycle"]=lifecycle;
+    const bool lifecycleClosed=!custom || (lifecycle["lifecycle_evidence_valid"].toBool() && lifecycle["adapter_shutdown_confirmed"].toBool() &&
+        lifecycle["usb_interface_release_confirmed"].toBool() && lifecycle["usb_handle_close_returned"].toBool() &&
+        lifecycle["usb_context_exit_returned"].toBool() && lifecycle["close_contract_succeeded"].toBool());
+    api.unload();if(trace)trace->record("dll_unload");report["cleanup_confirmed"]=closed==0 && lifecycleClosed;
     report["loader"]=api.loaderDiagnostics();
-    if(closed!=0) {report["error"]="PassThruClose failed; device state/cleanup unconfirmed";return report;}
+    if(closed!=0) {
+        report["cleanup_error"]="PassThruClose failed; device state/cleanup unconfirmed";
+        if(!report.contains("error")){report["primary_error_stage"]="close";report["error"]=report["cleanup_error"];}
+        return report;
+    }
     if(report["loader"].toObject().contains("dll_reference_released") && !report["loader"].toObject()["dll_reference_released"].toBool()) {report["error"]="Driver DLL reference release failed";return report;}
-    report["ok"]=true;report["validation_level"]="device_open_close_only";
+    if(custom && (!handshakeValid || !lifecycleClosed || !metadataValid)) {
+        if(!report.contains("error")){report["error"]="Custom USB qualification incomplete: cleanup evidence missing/failed";report["primary_error_stage"]="cleanup_evidence";}
+        report["validation_level"]="review_required_custom_usb_lifecycle";return report;
+    }
+    report["ok"]=true;report["validation_level"]=custom?"reviewed_custom_openport_usb_only":"device_open_close_only";
     report["compatibility_claim"]="No channel, ECU, ISO15765 or flashing compatibility validated";
     return report;
 }
