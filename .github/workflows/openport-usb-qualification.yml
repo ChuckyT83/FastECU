@@ -47,7 +47,7 @@ jobs:
           if((Get-FileHash build-openport-usb/libusb.7z -Algorithm SHA256).Hash.ToLowerInvariant() -ne '964a38152ca9a104cd00ec8d2f0617b89cd814f9b635e29763c68563d951521d'){throw 'Unexpected libusb archive'}
           & 7z.exe x -y -obuild-openport-usb/libusb build-openport-usb/libusb.7z
           if($LASTEXITCODE){throw 'libusb extraction failed'}
-          & python tools/openport_usb_driver/build.py --cc gcc --libusb build-openport-usb/libusb --output build-openport-usb/driver-build --native-mocks
+          & "$env:pythonLocation/python.exe" tools/openport_usb_driver/build.py --cc gcc --libusb build-openport-usb/libusb --output build-openport-usb/driver-build --native-mocks
           if($LASTEXITCODE){throw 'Driver build/fake USB tests failed'}
       - name: Run native diagnostic regression suites and package separate artifacts
         shell: pwsh
@@ -64,7 +64,7 @@ jobs:
           # Retain dependency source alongside its redistributed DLL (LGPL).
           Invoke-WebRequest 'https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.tar.bz2' -OutFile "$package/libusb-1.0.29.tar.bz2"
           if((Get-FileHash "$package/libusb-1.0.29.tar.bz2" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5977fc950f8d1395ccea9bd48c06b3f808fd3c2c961b44b0c2e6e29fc3a70a85'){throw 'Unexpected libusb source'}
-          & python -c "import tarfile,pathlib; p=pathlib.Path('build-openport-usb/driver-package'); t=tarfile.open(p/'libusb-1.0.29.tar.bz2'); (p/'LICENSE-libusb').write_bytes(t.extractfile('libusb-1.0.29/COPYING').read())"
+          & "$env:pythonLocation/python.exe" -c "import tarfile,pathlib; p=pathlib.Path('build-openport-usb/driver-package'); t=tarfile.open(p/'libusb-1.0.29.tar.bz2'); (p/'LICENSE-libusb').write_bytes(t.extractfile('libusb-1.0.29/COPYING').read())"
           if($LASTEXITCODE){throw 'libusb license extraction failed'}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
