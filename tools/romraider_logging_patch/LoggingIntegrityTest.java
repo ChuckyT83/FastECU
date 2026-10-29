@@ -97,6 +97,18 @@ public class LoggingIntegrityTest {
         check(angle.convert(new byte[]{0x52})==32 && angle.convert(new byte[]{0x64})==50,"AVCS conversions");
         com.romraider.logger.ecu.definition.EcuParameterConvertorImpl duty=new com.romraider.logger.ecu.definition.EcuParameterConvertorImpl("%","x*100/255","0.00",-1,"uint8",com.romraider.Settings.Endian.BIG,new HashMap<String,String>(),new com.romraider.logger.ecu.ui.handler.dash.GaugeMinMax(0,100,10));
         check(Math.abs(duty.convert(new byte[]{0x18})-24.0*100/255)<0.000001,"OCV conversion");
+        final java.util.List<String> cleanupCalls=new ArrayList<>();
+        J2534 cleanupFake=(J2534)Proxy.newProxyInstance(J2534.class.getClassLoader(),new Class<?>[]{J2534.class},(p,m,a)->{
+            cleanupCalls.add(m.getName());
+            if(m.getName().equals("writeMsg"))throw new J2534Exception("original stop failure");
+            if(m.getReturnType()==int.class)return 0;
+            return null;
+        });
+        set(connection,"api",cleanupFake);set(connection,"stopRequest",new byte[]{1});set(connection,"deviceId",42);set(connection,"msgId",1);
+        boolean retained=false;try{connection.close();}catch(J2534Exception e){retained=e.getMessage().equals("original stop failure");}
+        check(retained,"original stop failure retained");
+        check(cleanupCalls.equals(Arrays.asList("writeMsg","stopMsgFilter","disconnect","close")),"cleanup after failed stop");
+        connection.close();check(cleanupCalls.size()==4,"close is idempotent");
         System.out.println("PASS "+assertions+" RomRaider logging-integrity assertions; no adapter calls");
     }
 }

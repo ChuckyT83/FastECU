@@ -6,7 +6,7 @@ writes to a separate directory, preserving the original release/installation.
 It does not modify upstream, logger definitions, ECU firmware or J2534 registration.
 
 Repairs: exact connection-response length before copying; returned count/metadata
-validation and bounded message arrays; SSM read opcode and exact address-byte
+validation and bounded message arrays; cleanup despite a failed stop request; SSM read opcode and exact address-byte
 count checks before assigning parameter responses. One narrowly scoped setup
 accommodation permits unsupported TX purge only for 3.0.0-logging.1 before any
 application message has been sent on a fresh ISO15765 channel. Active-channel and K-Line purge errors
