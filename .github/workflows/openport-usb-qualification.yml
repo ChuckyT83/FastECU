@@ -5,6 +5,7 @@ on:
     branches: [fix/subaru-sh7058-communication-reliability]
     paths:
       - 'tools/openport_usb_driver/**'
+      - 'tools/romraider_logging_patch/**'
       - 'tools/j2534_diagnostics/**'
       - 'tools/windows/diagnostics-toolkit.ps1'
       - 'tools/windows/build-openport-usb.ps1'
@@ -54,6 +55,7 @@ jobs:
           path: |
             build-usb-qualification/driver-build/build-manifest.json
             build-usb-qualification/driver-build/fake-usb-results.json
+            build-usb-qualification/driver-build/fake-logging-results.json
             build-usb-qualification/diagnostics/logs/
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -67,4 +69,45 @@ jobs:
         with:
           name: reviewed-openport-usb-diagnostics-x64-${{ github.sha }}
           path: build-usb-qualification/diagnostics/package/
+          retention-days: 14
+
+  offline-logging-integrity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build and sanitize actual driver with fake USB only
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libusb-1.0-0-dev
+          mkdir -p build-logging-evidence
+          gcc -std=gnu11 -O1 -g -pthread -ffunction-sections -fdata-sections -Wno-pointer-sign -fno-pie -no-pie -fsanitize=address,undefined -fno-omit-frame-pointer -I/usr/include/libusb-1.0 tools/openport_usb_driver/tests/mock_logging.c -Wl,--gc-sections -o build-logging-evidence/fake-logging
+          python3 - <<'PYTEST'
+          import subprocess,json,os
+          from pathlib import Path
+          cases=['split','coalesced','partial-timeout','poll-carry','timeout-bytes','malformed','capacity','queue-limit','write-counts','write-capacity','filter-bounds','control-routing','clear','ownership','threads','repeated','fuzz','parameters']
+          results=[]
+          for case in cases:
+              r=subprocess.run(['build-logging-evidence/fake-logging',case],capture_output=True,text=True,timeout=15,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=1'))
+              results.append({'case':case,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr})
+          Path('build-logging-evidence/sanitizer-results.json').write_text(json.dumps(results,indent=2))
+          assert all(x['exit']==0 for x in results),results
+          PYTEST
+      - name: Build and offline-test separate RomRaider repair candidate
+        run: |
+          curl --fail -L 'https://github.com/RomRaider/RomRaider/releases/download/1.1.0-NOV26-2025/RomRaider1.1.0-experimental-amd64-windows.zip' -o build-logging-evidence/romraider-release.zip
+          python3 - <<'PYEXTRACT'
+          import zipfile
+          with zipfile.ZipFile('build-logging-evidence/romraider-release.zip') as z:z.extractall('build-logging-evidence/original')
+          PYEXTRACT
+          python3 tools/romraider_logging_patch/build.py --romraider build-logging-evidence/original/RomRaider --output build-logging-evidence/romraider-candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: logging-integrity-offline-evidence-${{ github.sha }}
+          path: |
+            build-logging-evidence/sanitizer-results.json
+            build-logging-evidence/romraider-candidate/
           retention-days: 14

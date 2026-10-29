@@ -17,7 +17,7 @@
 #ifndef OP2J2534_H
     #define OP2J2534_H
 
-const char *DLL_VERSION = "3.0.0-usbqual.1";
+const char *DLL_VERSION = "3.0.0-logging.1";
 const char *API_VERSION = "04.04";
 
 #define PM_DATA_LEN	4128 // Maixmum length of data in a PASSTHRU_MSG

@@ -1,28 +1,46 @@
-# Separate reviewed OpenPort USB lifecycle derivative
+# Maintained OpenPort derivative — logging-integrity candidate
 
-This BSD-3-Clause component is derived from NikolaKozina/j2534 revision
-22ae8e85aa421dd74b2a3678bd9bf0f0db8ff55a and the previously reviewed diagnostic
-patch. It is kept separate from FastECU application/SH7058 production code.
-The accompanying source-revision.json pins all reviewed inputs. build.py refuses
-changed source/dependency inputs, builds a Windows x64 DLL and ABI assertions,
-and optionally executes only the fake-USB harness (never the real DLL).
+Based on NikolaKozina/j2534 revision
+22ae8e85aa421dd74b2a3678bd9bf0f0db8ff55a and the preserved USBQUAL/1 lifecycle
+corrections. Source/dependency bytes are pinned in source-revision.json.
+This component remains separate from FastECU Subaru production protocols/gates.
 
-Changes are limited to initialization/shutdown error preservation, partial USB
-resource cleanup, exclusive in-library ownership, acknowledgment deadlines/short
-writes in the existing helper, enabled log flushing and USBQUAL/1 lifecycle
-markers. Commands remain ati, ata and atz. No updater, bootloader, persistent
-configuration command, channel qualification or CAN/flashing repair is added.
-General WriteMsgs/filter/IOCTL limitations remain; this is NOT a qualified flasher.
+Version 3.0.0-logging.1 adds incremental USB record parsing, complete-message-only
+bounded FIFO delivery, exact lengths/copy bounds, finite total read/write waits,
+partial-transfer counts, channel validation and first-error preservation.
+Only whole framed command replies satisfy command waits; binary messages received
+during control commands are retained. Calls are mutually exclusive without
+unbounded lock waiting, and GetLastError is thread-local and available during I/O.
+The existing unbuffered LOG_ENABLE capture and lifecycle acknowledgments remain.
+No updater, bootloader, programming or new persistent command is introduced.
 
-Example from a Windows x64 MinGW developer environment (software-only build):
+A receive timeout with an unfinished message/request, malformed stream, queue
+exhaustion or partial write faults the channel. Subsequent payload operations
+fail rather than replay partial/stale data. The caller must close/reopen explicitly;
+there is no automatic retry/reconnect or ECU recovery command. Zero-time polling
+uses a bounded 1 ms USB wait rather than libusb's infinite timeout 0. RX clearing
+is a bounded drain to a quiet host-USB boundary, not a guarantee about future
+adapter/ECU responses. A faulted/in-flight request cannot be cleared into success.
+The adapter protocol has no transaction identifier: same-length late SSM replies
+cannot be authenticated to addresses by this driver. Extended-address USB record
+semantics remain unqualified and are explicitly refused.
 
-    python build.py --cc gcc --libusb C:\deps\libusb-1.0.29 --output C:\build\driver --native-mocks
+CLEAR_TX_BUFFER returns ERR_NOT_SUPPORTED: the driver has no verified adapter TX
+purge command. The separately supplied RomRaider 1.1.0 patch tolerates this only
+for this exact driver version on a fresh channel that has sent no application
+messages. Unmodified RomRaider may fail its connection setup at that IOCTL.
+Other clients must handle this unsupported capability; FastECU production gates
+are not weakened. Firmware identity and real CAN/ISO-TP behavior remain untested.
 
-The libusb directory must contain the extracted official 1.0.29 Windows archive.
-Its archive SHA-256 and DLL SHA-256 are in source-revision.json. On Linux use the
-x64 MinGW compiler path without --native-mocks and run the existing fake-USB
-harness with the native GCC separately. No installed driver is overwritten.
-Native CI uses the existing diagnostic toolkit runner, with a build-time pin to
-its separately produced driver artifact. Production hash pins cannot be changed
-by runtime environment variables. Test-only fixture pins exist solely in the
-separately labelled test executable, which must never be packaged for hardware.
+Build with MinGW x64 and the extracted official libusb 1.0.29 Windows archive:
+
+    python build.py --cc gcc --libusb C:\deps\libusb --output C:\build\driver --native-mocks
+
+--native-mocks executes 22 existing lifecycle cases and 18 actual-driver logging
+cases with all USB functions replaced by the existing fake harness. It never
+loads the real DLL or opens an adapter. Tests cover every split point/byte-wise
+records, coalescing/notifications, timeout bytes, partial-message quarantine,
+size/queue bounds, write counts, filter validation, control routing, clearing,
+concurrent calls/thread-local errors, 10,000 changing replies and 10,000 malformed
+inputs. Native Linux CI also runs ASan/UBSan/leak detection. These software checks
+do not qualify a real clone, adapter firmware, vehicle logging or flashing.

@@ -16,6 +16,7 @@ if($LASTEXITCODE){throw 'Driver build/fake USB tests failed'}
 $package=Join-Path $BuildDirectory 'driver-package'
 New-Item -ItemType Directory -Force $package | Out-Null
 foreach($file in @('j2534.dll','libusb-1.0.dll','LICENSE-driver','DRIVER_SHA256.txt','build-manifest.json','adapter-manifest.json')) {Copy-Item "$BuildDirectory/driver-build/$file" $package}
+Copy-Item "$BuildDirectory/driver-build/runtime-licenses" $package -Recurse -Force
 Copy-Item docs/openport-usb-qualification.md $package
 Invoke-WebRequest 'https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.tar.bz2' -OutFile "$package/libusb-1.0.29.tar.bz2"
 if((Get-FileHash "$package/libusb-1.0.29.tar.bz2" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5977fc950f8d1395ccea9bd48c06b3f808fd3c2c961b44b0c2e6e29fc3a70a85'){throw 'Unexpected libusb source'}

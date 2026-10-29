@@ -1,0 +1,98 @@
+--- a/com/romraider/io/j2534/api/J2534ConnectionISO15765.java
++++ b/com/romraider/io/j2534/api/J2534ConnectionISO15765.java
+@@ -79,7 +79,10 @@
+         pollState.setCurrentState(PollingState.State.STATE_0);
+         api.writeMsg(channelId, request, timeout, TxFlags.ISO15765_FRAME_PAD);
+         final byte[] readMsg = api.readMsg(channelId, 1, timeout);
+-        System.arraycopy(readMsg, 0, response, 0, readMsg.length) ;
++        if(readMsg.length != response.length) {
++            throw new J2534Exception("SSM response length mismatch: expected " + response.length + " bytes, received " + readMsg.length);
++        }
++        System.arraycopy(readMsg, 0, response, 0, response.length);
+     }
+ 
+     // Send request and wait specified time for one response with unknown length
+--- a/com/romraider/io/j2534/api/J2534Impl.java
++++ b/com/romraider/io/j2534/api/J2534Impl.java
+@@ -48,6 +48,8 @@
+     private static final Logger LOGGER = Logger.getLogger(J2534Impl.class);
+     private final NativeLong protocolID;
+     private boolean loopback;
++    private boolean boundedCustomDriver;
++    private boolean noWritesYet=true;
+     private static J2534_v0404 lib;
+ 
+ 
+@@ -604,6 +606,7 @@
+             );
+         if (ret.intValue() != Status.NOERROR.getValue()) handleError(
+                 "PassThruReadVersion", ret.intValue());
++        boundedCustomDriver=Native.toString(pDllVersion.array()).startsWith("3.0.0-logging.1 ");
+         return new Version(
+                 Native.toString(pFirmwareVersion.array()),
+                 Native.toString(pDllVersion.array()),
+@@ -630,6 +633,7 @@
+             );
+         if (ret.intValue() != Status.NOERROR.getValue()) handleError(
+                 "PassThruConnect", ret.intValue());
++        noWritesYet=true;
+         return pChannelID.getValue().intValue();
+     }
+ 
+@@ -898,6 +902,7 @@
+      */
+     @Override
+     public void writeMsg(int channelId, byte[] data, long timeout, TxFlags flag) {
++        noWritesYet=false;
+         PASSTHRU_MSG msg = passThruMessage(flag, data);
+         if (LOGGER.isTraceEnabled())
+             LOGGER.trace("Write Msg: " + toString(msg));
+@@ -1051,7 +1056,9 @@
+                 null,
+                 null
+             );
+-        if (ret.intValue() != Status.NOERROR.getValue()) handleError(
++        if(ret.intValue()==Status.ERR_NOT_SUPPORTED.getValue() && boundedCustomDriver && noWritesYet) {
++            LOGGER.warn("Reviewed custom driver has no confirmed adapter TX purge; fresh channel has transmitted no application messages");
++        } else if(ret.intValue()!=Status.NOERROR.getValue()) handleError(
+                 "PassThruIoctl (CLEAR_TX_BUFFER)", ret.intValue());
+ 
+         ret = lib.PassThruIoctl(
+@@ -1186,12 +1193,16 @@
+             status.intValue() != Status.ERR_BUFFER_EMPTY.getValue())
+                 handleError("PassThruReadMsgs", status.intValue());
+         int cnt = pNumMsgs.getValue().intValue();
+-        if (cnt > nm && LOGGER.isTraceEnabled())
+-            LOGGER.trace(cnt - nm + " msgs dropped");
++        if(cnt<0 || cnt>nm)throw new J2534Exception("Invalid driver receive count: " + cnt + ", capacity: " + nm);
+         for (int i = 0; i < cnt ; i++) {
+             msgs[i].read();
+-        }
+-        return msgs;
++            int length=msgs[i].dataSize.intValue();
++            int extra=msgs[i].extraDataIndex.intValue();
++            if(length<0 || length>msgs[i].data.length || extra<0 || extra>length ||
++                msgs[i].protocolID.intValue()!=protocolID.intValue())
++                throw new J2534Exception("Invalid J2534 receive metadata");
++        }
++        return java.util.Arrays.copyOf(msgs,cnt);
+     }
+ 
+     private ConfigItem[] configItems(SCONFIG_LIST sConfigs) {
+--- a/com/romraider/io/protocol/ssm/iso15765/SSMLoggerProtocol.java
++++ b/com/romraider/io/protocol/ssm/iso15765/SSMLoggerProtocol.java
+@@ -90,8 +90,14 @@
+         checkNotNullOrEmpty(queries, "queries");
+         checkNotNullOrEmpty(response, "response");
+         byte[] responseData = extractResponseData(response);
++        if(response[4]!=SSMProtocol.READ_ADDRESS_RESPONSE)
++            throw new com.romraider.logger.ecu.exception.InvalidResponseException("Expected SSM read-address response E8");
+         Collection<EcuQuery> filteredQueries = filterDuplicates(queries);
+         Map<String, byte[]> addressResults = new HashMap<String, byte[]>();
++        int expected=0;
++        for(EcuQuery filteredQuery:filteredQueries)expected+=DATA_SIZE*(filteredQuery.getBytes().length/ADDRESS_SIZE);
++        if(responseData.length!=expected)
++            throw new com.romraider.logger.ecu.exception.InvalidResponseException("SSM parameter count mismatch");
+         int i = 0;
+         for (EcuQuery filteredQuery : filteredQueries) {
+             byte[] bytes = new byte[DATA_SIZE * (filteredQuery.getBytes().length / ADDRESS_SIZE)];

@@ -45,7 +45,9 @@ const char *libusb_error_name(int e) {
  switch(e){case 0:return "LIBUSB_SUCCESS";case -7:return "LIBUSB_ERROR_TIMEOUT";
  case -3:return "LIBUSB_ERROR_ACCESS";case -6:return "LIBUSB_ERROR_BUSY";default:return "LIBUSB_ERROR_IO";}
 }
+static int (*logging_transfer)(libusb_device_handle *,unsigned char,unsigned char *,int,int *,unsigned int);
 int libusb_bulk_transfer(libusb_device_handle *h,unsigned char ep,unsigned char *data,int length,int *n,unsigned int timeout) {
+ if(logging_transfer)return logging_transfer(h,ep,data,length,n,timeout);
  (void)h;assert(timeout>0 && timeout<=2000);*n=0;
  if(ep==1){
   assert((length==9 && !memcmp(data,"\r\n\r\nati\r\n",9)) ||
@@ -59,6 +61,7 @@ int libusb_bulk_transfer(libusb_device_handle *h,unsigned char ep,unsigned char 
  *n=(int)strlen(reply);assert(*n<length);memcpy(data,reply,*n);return 0;
 }
 const struct libusb_version *libusb_get_version(void) { static const struct libusb_version v={1,0,29,0,"",""};return &v; }
+#ifndef LOGGING_HARNESS
 int main(int argc,char **argv) {
  assert(argc>=2);char error[82];memset(error,0x5a,sizeof(error));
  if(strcmp(argv[1],"null-error")==0){assert(PassThruGetLastError(NULL)==J2534_ERR_NULL_PARAMETER);}
@@ -111,3 +114,5 @@ int main(int argc,char **argv) {
  }
  printf("PASS %s\n",argv[1]);return 0;
 }
+
+#endif

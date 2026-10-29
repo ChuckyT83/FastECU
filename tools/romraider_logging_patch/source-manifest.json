@@ -1,0 +1,10 @@
+{
+  "romraider_release": "1.1.0-NOV26-2025",
+  "release_revision": "88d9fbd405d7bbece915e2f5860d10aa644c3850",
+  "normalized_source_sha256": {
+    "com/romraider/io/j2534/api/J2534ConnectionISO15765.java": "69b65bdabeea5a3e6eafc82d104ab9d052ed54d35c54938ac12e3ce2006bb8c4",
+    "com/romraider/io/j2534/api/J2534Impl.java": "75e70a8ceae4c2eb677ae87453d0176cd13bb45c132b63968d1d54d2b15193dd",
+    "com/romraider/io/protocol/ssm/iso15765/SSMLoggerProtocol.java": "e35e364b3e1b3d2a34016cb8e06c82ce07525a699898ebd0ddca35c5b30a6184"
+  },
+  "original_jar_sha256": "43f0e92d652a5d2dde57fbe76ef99ff4f18c8147b0cbc20c0c4ccb33a7fe6635"
+}

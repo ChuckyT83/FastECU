@@ -19,11 +19,11 @@ lib=dep/'MinGW64/dll/libusb-1.0.dll'
 if sha(lib)!=manifest['libusb_dll_sha256']:raise SystemExit('Unexpected libusb DLL')
 include=dep/'include'
 flags=['-std=gnu11','-O2','-Wall','-Wextra','-Wno-pointer-sign']
-command=[args.cc]+flags+['-shared','-I'+str(include),str(root/'j2534/j2534.c'),str(root/'j2534.def'),str(dep/'MinGW64/static/libusb-1.0.dll.a'),'-Wl,--exclude-all-symbols,--no-insert-timestamp','-static-libgcc','-o',str(out/'j2534.dll')]
+command=[args.cc]+flags+['-shared','-static','-I'+str(include),str(root/'j2534/j2534.c'),str(root/'j2534.def'),str(dep/'MinGW64/static/libusb-1.0.dll.a'),'-Wl,--exclude-all-symbols,--no-insert-timestamp','-static-libgcc','-o',str(out/'j2534.dll')]
 subprocess.run(command,check=True)
 subprocess.run([args.cc,'-std=c11','-c',str(root/'tests/abi-x64.c'),'-o',str(out/'abi-x64.o')],check=True)
 (out/'DRIVER_SHA256.txt').write_text(sha(out/'j2534.dll')+'\n')
-shutil.copy2(lib,out/'libusb-1.0.dll');shutil.copy2(root/'LICENSE',out/'LICENSE-driver')
+shutil.copytree(root/'runtime-licenses',out/'runtime-licenses',dirs_exist_ok=True);shutil.copy2(lib,out/'libusb-1.0.dll');shutil.copy2(root/'LICENSE',out/'LICENSE-driver')
 manifest['build_command']=command;manifest['compiler']=subprocess.check_output([args.cc,'--version'],text=True).splitlines()[0]
 manifest['j2534_dll_sha256']=sha(out/'j2534.dll');manifest['physical_test_performed']=False
 results=[]
@@ -37,7 +37,17 @@ if args.native_mocks:
         results.append({'case':case,'exit':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         if result.returncode:raise SystemExit(json.dumps(results[-1]))
     (out/'fake-usb-results.json').write_text(json.dumps(results,indent=2))
+logging_results=[]
+if args.native_mocks:
+    logging_exe=out/('fake-logging-tests.exe' if os.name=='nt' else 'fake-logging-tests')
+    subprocess.run([args.cc,'-std=gnu11','-O1','-ffunction-sections','-fdata-sections','-Wno-pointer-sign','-I'+str(include),str(root/'tests/mock_logging.c'),'-Wl,--gc-sections','-o',str(logging_exe)]+([] if os.name=='nt' else ['-pthread']),check=True)
+    for case in ['split','coalesced','partial-timeout','poll-carry','timeout-bytes','malformed','capacity','queue-limit','write-counts','write-capacity','filter-bounds','control-routing','clear','ownership','threads','repeated','fuzz','parameters']:
+        result=subprocess.run([str(logging_exe),case],capture_output=True,text=True,timeout=15)
+        logging_results.append({'case':case,'exit':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+        if result.returncode:raise SystemExit(json.dumps(logging_results[-1]))
+    (out/'fake-logging-results.json').write_text(json.dumps(logging_results,indent=2))
 manifest['native_mock_cases_passed']=len(results)
+manifest['native_logging_cases_passed']=len(logging_results)
 (out/'build-manifest.json').write_text(json.dumps(manifest,indent=2))
 print('Reviewed driver artifact SHA-256:',manifest['j2534_dll_sha256'])
 

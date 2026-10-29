@@ -1,16 +1,22 @@
 {
   "upstream_repository": "https://github.com/NikolaKozina/j2534",
   "upstream_revision": "22ae8e85aa421dd74b2a3678bd9bf0f0db8ff55a",
-  "derivative": "USBQUAL/1; lifecycle-only correction, no CAN/flashing qualification",
+  "derivative": "USBQUAL/1 + logging integrity repair 1; software-only tests, no vehicle qualification",
   "source_sha256": {
-    "j2534/j2534.c": "8d2ea24fa0d279f1ebdd30164b9e3f8e3985f2be85693592a9868bce3bda2794",
-    "j2534/j2534.h": "837ea56e841359beb38c12037c6f88431a5fd6a332bf40cbf611705d59907f35",
+    "j2534/j2534.c": "ac4eedd5219f2980f3d96615604add38015dc16f8c1e5cb27c24218def64ff97",
+    "j2534/j2534.h": "30893682ea8fb9eb5a8172bd87fd5e9225bbd99b39e115686abcf34573183f1c",
     "j2534.def": "8db2e801a34226bb9c39635aa67b96cd11758c907af2effff38e354acc69c49d",
-    "tests/mock_connection.c": "631ae008cbf5a686debbc645bff837f52c354619fa2c4bcb42cba480cd3872fa",
+    "tests/mock_connection.c": "9138a69f8af30486335702dfd9fb37f37efd87a2a16eb9cc961e8262f8ab64f9",
     "tests/abi-x64.c": "9790ed50af94a7c611305e9c39dc97dfb44f3344efb4a9f0e37f7b2c9f13a99f",
     "LICENSE": "4a165f4dbdcfa96488a19af37430f098973d95fa4a2181ac753d9ed7c0d4f696",
     ".gitattributes": "fcabdd740511833ea71a8b224fc031599dec86b932581fb6a2fd16bc93a010b5",
-    "build.py": "4e1e8a5680540776d7203b198c03b4e5c0b3370045e4b6aed9572c9eda73741b"
+    "build.py": "96294738e54ef12dbe47d465d58601ef00aa47e42a2455e90ccc1a90946e022d",
+    "j2534/receive_stream.inc": "445df43da3c55918ff66557eb6307690c0e07ac8f8b3c5ee9aa20d58c82f3ea0",
+    "tests/mock_logging.c": "25d8b85b0884ab6999b6f34046f46efcbcb7ed1050265b1016ad95f423b249f2",
+    "README.md": "28f212d2430bae16bd2d4e527d70d0dd2f0e49bfb3baada44c79fb21a7911ab7",
+    "runtime-licenses/README.txt": "9283bc73a6461edb4ea4a95bd780ebfe1cba7a30a93195bb6596c32bcb8b8209",
+    "runtime-licenses/MinGW-w64-notices.txt": "50e5bb66d222c7d4692c2d13670ddcd3664779358e389a026b69a0e0e18e7be5",
+    "runtime-licenses/GCC-runtime-notices.txt": "f891d7e0c56f503a92c7258d540b3d8215852d8387cbca8f1f07c6f4b6e67da6"
   },
   "libusb_version": "1.0.29",
   "libusb_archive_sha256": "964a38152ca9a104cd00ec8d2f0617b89cd814f9b635e29763c68563d951521d",

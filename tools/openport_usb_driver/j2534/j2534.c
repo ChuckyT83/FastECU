@@ -80,11 +80,14 @@ const uint8_t ISO9141 = 0x33;
 const uint8_t ISO14230 = 0x34;
 const uint8_t CAN = 0x35;
 const uint8_t ISO15765 = 0x36;
-int8_t LAST_ERROR[LE_LEN];
+#ifdef _MSC_VER
+__declspec(thread) int8_t LAST_ERROR[LE_LEN];
+#else
+static __thread int8_t LAST_ERROR[LE_LEN];
+#endif
 int littleEndian = TRUE;
 int write_log = FALSE;
 int8_t log_msg[LM_LEN];
-unsigned long rx_buf_idx = 0;
 char fw_version[MAX_LEN];
 FILE *logfile;
 connection_t con[1];
@@ -105,11 +108,6 @@ enum rx_msg_type {
 static void writelog(const char *str)
 {
 	fprintf(logfile, "%s", str);
-}
-
-static void writeloghex(const int8_t num)
-{
-	fprintf(logfile, "%02X ", (uint8_t)num);
 }
 
 static void writelogmsg(const uint8_t *data, const unsigned long start, const unsigned long len)
@@ -192,39 +190,6 @@ static uint32_t parse_ts(const void *data)
   This copy function copies bytes, 2 at a time between s_start to s_end
   from the object src into the object dest beginning at d_pos.
   */
-static void datacopy(PASSTHRU_MSG *dest, const int8_t *src,
-	const uint32_t d_pos, const uint32_t s_start, const uint32_t s_end)
-{
-	uint32_t i = d_pos;
-	uint32_t dest_idx = dest->DataSize;
-	uint32_t idx = dest_idx - d_pos;
-	uint32_t limit = PM_DATA_LEN - dest_idx;
-	uint32_t x2_end = s_end - 1;
-	uint32_t x2_limit = limit - 1;
-
-	if (write_log) writelog("\t\t\t  ");
-
-	// Copy 2 bytes per iteration
-	// check if at x2_end of src or dest->Data is almost full
-	for (; (i < x2_end) && (i < x2_limit); i += 2)
-	{
-		dest->Data[idx + i] = src[s_start + i];
-		dest->Data[idx + i + 1] = src[s_start + i + 1];
-		if (write_log)
-		{
-			writeloghex(src[s_start + i]);
-			writeloghex(src[s_start + i + 1]);
-		}
-	}
-	// Copy last byte if any
-	// check end of src or dest->Data is full
-	for (; (i < s_end) && (i < limit); i++)
-	{
-		dest->Data[idx + i] = src[s_start + i];
-		if (write_log) writeloghex(src[s_start + i]);
-	}
-	if (write_log) writelog("\n");
-}
 
 /*
    This open_dev_endpoints function locates the device to open by Vendor and
@@ -314,25 +279,18 @@ static int error_map(const int usb_err)
 /*
 	Check if characters converted correctly to a number
 */
-static int is_valid(const unsigned long value)
-{
-	if (value == 0)
-	{
-		if (errno == EINVAL || errno == ERANGE)
-		{
-			if (write_log)
-			{
-				snprintf(log_msg, LM_LEN,
-					"\n! Error: failed to convert characters to value [ %s ]\n",
-					strerror(errno));
-				writelog(log_msg);
-			}
-			snprintf(LAST_ERROR, LE_LEN, "Error: failed to convert characters to value");
-			errno = 0;
-			return FALSE;
-		}
-	}
-	return TRUE;
+static char *next_token(char *text,char **state) {
+    char *p=text?text:*state;if(!p)return NULL;
+    p+=strspn(p,DELIMITERS);if(!*p){*state=NULL;return NULL;}
+    char *end=p+strcspn(p,DELIMITERS);
+    if(*end){*end=0;*state=end+1;}else *state=NULL;
+    return p;
+}
+static int parse_decimal(const char *text,unsigned long *value) {
+    if(!text || text[0]<'0' || text[0]>'9')return FALSE;
+    char *end=NULL;errno=0;unsigned long parsed=strtoul(text,&end,10);
+    if(errno || !end || *end){snprintf((char *)LAST_ERROR,LE_LEN,"Invalid numeric adapter response");return FALSE;}
+    *value=parsed;return TRUE;
 }
 
 /*
@@ -417,30 +375,6 @@ static void flush_queue()
   Return offset in data where first match is found or -1
   if not found.
 */
-static int pattern_search(const uint8_t *data, const int data_len, const uint8_t *pattern)
-{
-	if (data_len < (int)strlen(pattern))
-		return -1;
-
-	int search_len = data_len - (int)strlen(pattern) + 1;
-	int i = 0;
-	for (; i < search_len; ++i)
-	{
-		if (data[i] != pattern[0])
-			continue;
-
-		// first byte matched, test for the rest of the pattern
-		int j = (int)strlen(pattern) - 1;
-		for (; j >= 1; j--)
-		{
-			if (data[i + j] != pattern[j])
-				break;
-			if (j == 1)
-				return i;
-		}
-	}
-	return -1;
-}
 
 /*
   Send data and expect to receive a reply, using specified timeout.
@@ -456,123 +390,39 @@ static uint64_t lifecycle_clock_ms(void)
     return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
 #endif
 }
-static int usb_send_expect(uint8_t *data, const size_t len,
-	const int capacity, const uint32_t timeout, const uint8_t *expect)
+#include "receive_stream.inc"
+
+static int usb_send_expect(uint8_t *data,const size_t length,const int capacity,
+                           const uint32_t timeout,const uint8_t *expect)
 {
-	int bytes_written = 0, r = LIBUSB_SUCCESS;
-	const uint64_t deadline = lifecycle_clock_ms() + timeout;
-
-	// send data only if there is more than 0 bytes to send
-	if (len > 0 && len <= (size_t)capacity)
-	{
-		r = libusb_bulk_transfer(con->dev_handle, endpoint->addr_out,
-			data, (int)len, &bytes_written, timeout);
-		if (r == LIBUSB_SUCCESS && bytes_written != (int)len) r = LIBUSB_ERROR_IO;
-		if (write_log)
-		{
-			writelog("\tUSB stream Sent:\n\t\t");
-			if (bytes_written > 0)
-				writelogmsg(data, 0, bytes_written);
-			else
-				writelog("bytes_written: 0, no USB stream Sent");
-			writelog("\n");
-		}
-	}
-	if (r != LIBUSB_SUCCESS)
-	{
-		if (write_log)
-		{
-			snprintf(log_msg, LM_LEN, "\tSend Error: %s\n", libusb_error_name(r));
-			writelog(log_msg);
-		}
-		snprintf(LAST_ERROR, LE_LEN,
-			"USB data transfer error sending %d bytes: %s", (int)len, libusb_error_name(r));
-	}
-	else
-	{
-		if (timeout > 0) // expect a reply otherwise return without reading
-		{
-			int need_aro = TRUE;
-			int need_exp = FALSE;
-			// If expect value is passed then the check for ARO is not required
-			if (expect)
-			{
-				need_exp = TRUE;
-				need_aro = FALSE;
-			}
-
-			int bytes_read = 0;
-			int get_next = TRUE;
-			while (get_next)
-			{
-                const uint64_t now = lifecycle_clock_ms();
-                if (now >= deadline) {
-                    snprintf(LAST_ERROR, LE_LEN, "USB acknowledgment deadline expired");
-                    return LIBUSB_ERROR_TIMEOUT;
-                }
-                r = libusb_bulk_transfer(con->dev_handle, endpoint->addr_in,
-                    data, capacity, &bytes_read, (unsigned int)(deadline - now));
-				if (bytes_read < capacity)
-					data[bytes_read] = '\0';
-
-				if (r != LIBUSB_SUCCESS)
-				{
-					if (write_log)
-					{
-						snprintf(log_msg, LM_LEN, "\tReceive Error: %s\n", libusb_error_name(r));
-						writelog(log_msg);
-					}
-					snprintf(LAST_ERROR, LE_LEN, "USB data transfer error: %s", libusb_error_name(r));
-					return r;
-				}
-
-				if (write_log)
-				{
-					writelog("\tUSB stream Rcvd:\n\t\t");
-					if (bytes_read > 0)
-						writelogmsg(data, 0, bytes_read);
-					else
-						writelog("bytes_read: 0, USB stream Rcvd");
-					writelog("\n");
-				}
-
-				if (bytes_read >= 4 && data[2] == 0x65)	// e
-				{
-					unsigned long errnum = strtoul(data + 4, NULL, 10);
-					if (is_valid(errnum))
-					{
-						snprintf(LAST_ERROR, LE_LEN, "Error: J2534 device comms error: %lu", errnum);
-						return errnum;
-					}
-				}
-
-				if (need_aro)
-				{
-					int aro_pos = pattern_search(data, bytes_read, "aro\r\n");
-					if (aro_pos >= 0)
-					{
-						need_aro = FALSE;
-						get_next = FALSE;
-						if (write_log)
-							writelog("\t\tCommand acknowledged\n");
-					}
-				}
-
-				if (need_exp)
-				{
-					int exp_pos = pattern_search(data, bytes_read, expect);
-					if (exp_pos >= 0)
-					{
-						need_exp = FALSE;
-						get_next = FALSE;
-						if (write_log)
-							writelog("\t\tAcknowledged by expect\n");
-					}
-				}
-			}
-		}
-	}
-	return r;
+    if(!data || !length || capacity<=0 || length>(size_t)capacity) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Invalid USB command length");return J2534_ERR_INVALID_MSG;
+    }
+    if(receive_fault)return receive_fault;
+    uint64_t deadline=lifecycle_clock_ms()+(timeout?timeout:1);
+    unsigned long before=command_serial;int actual=0;
+    command_waiting=timeout!=0;command_matched=0;command_error=0;command_expect=expect;
+    int r=libusb_bulk_transfer(con->dev_handle,endpoint->addr_out,data,(int)length,&actual,remaining_ms(deadline)?remaining_ms(deadline):1);
+    if(write_log){writelog("\tUSB stream Sent:\n\t\t");if(actual>0 && actual<=(int)length)writelogmsg(data,0,(unsigned long)actual);writelog("\n");}
+    if(r || actual!=(int)length) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"USB command send failed/short: %d",r);command_waiting=0;return r?r:LIBUSB_ERROR_IO;
+    }
+    if(!timeout){command_waiting=0;return LIBUSB_SUCCESS;}
+    while(remaining_ms(deadline)) {
+        r=receive_usb(remaining_ms(deadline));
+        if(r && r!=LIBUSB_ERROR_TIMEOUT){command_waiting=0;return r;}
+        if(command_serial!=before) {
+            if(command_error){command_waiting=0;return command_error;}
+            if(control_matches(command_reply,expect)) {
+                size_t n=strlen(command_reply);
+                if(n>=(size_t)capacity){command_waiting=0;return J2534_ERR_BUFFER_OVERFLOW;}
+                memcpy(data,command_reply,n+1);command_waiting=0;return LIBUSB_SUCCESS;
+            }
+            before=command_serial;
+        }
+        if(r==LIBUSB_ERROR_TIMEOUT)break;
+    }
+    command_waiting=0;snprintf((char *)LAST_ERROR,LE_LEN,"USB acknowledgment deadline expired");return LIBUSB_ERROR_TIMEOUT;
 }
 
 /*
@@ -616,6 +466,7 @@ static int release_usb_resources(void)
         lifecycle_event("context_exit_returned", 1);
         usb_context_acquired = FALSE;
     }
+    reset_receive();con->protocol_id=0;con->channel=0;
     con->ctx = NULL;
     con->device_id = 0;
     memset(endpoint, 0, sizeof(*endpoint));
@@ -624,6 +475,20 @@ static int release_usb_resources(void)
     return release_status;
 }
 
+#define PassThruOpen impl_PassThruOpen
+#define PassThruClose impl_PassThruClose
+#define PassThruConnect impl_PassThruConnect
+#define PassThruDisconnect impl_PassThruDisconnect
+#define PassThruReadMsgs impl_PassThruReadMsgs
+#define PassThruWriteMsgs impl_PassThruWriteMsgs
+#define PassThruStartPeriodicMsg impl_PassThruStartPeriodicMsg
+#define PassThruStopPeriodicMsg impl_PassThruStopPeriodicMsg
+#define PassThruStartMsgFilter impl_PassThruStartMsgFilter
+#define PassThruStopMsgFilter impl_PassThruStopMsgFilter
+#define PassThruSetProgrammingVoltage impl_PassThruSetProgrammingVoltage
+#define PassThruReadVersion impl_PassThruReadVersion
+#define PassThruGetLastError impl_PassThruGetLastError
+#define PassThruIoctl impl_PassThruIoctl
 int32_t PassThruOpen(const void *pName, unsigned long *pDeviceID)
 {
     (void)pName;
@@ -641,6 +506,7 @@ int32_t PassThruOpen(const void *pName, unsigned long *pDeviceID)
         logfile = fopen(le, "a");
         if (logfile) { setvbuf(logfile, NULL, _IONBF, 0); write_log = TRUE; }
     }
+    reset_receive();con->protocol_id=0;con->channel=0;
     lifecycle_event("begin", 1);
     littleEndian = isLittleEndian();
     fw_version[0] = '\0';
@@ -706,6 +572,7 @@ int32_t PassThruClose(const unsigned long DeviceID)
     }
     uint8_t data[MAX_LEN] = {0};
     strcpy((char *)data, "atz\r\n");
+    receive_fault=0;wire_used=0;assembling_active=0;
     int shutdown = usb_send_expect(data, strlen((char *)data), MAX_LEN, 2000, NULL);
     lifecycle_event("shutdown_ack", shutdown == LIBUSB_SUCCESS ? 1 : 0);
     int first = error_map(shutdown);
@@ -727,53 +594,18 @@ int32_t PassThruClose(const unsigned long DeviceID)
 /*
   Establish a connection using a protocol channel.
  */
-int32_t PassThruConnect(const unsigned long DeviceID, const unsigned long protocolID,
-	const unsigned long flags, const unsigned long baud, unsigned long *pChannelID)
+int32_t PassThruConnect(const unsigned long DeviceID,const unsigned long protocolID,
+    const unsigned long flags,const unsigned long baud,unsigned long *pChannelID)
 {
-	if (write_log)
-	{
-		snprintf(log_msg, LM_LEN,
-			"Connecting...\n\t|\n"
-			"\tDeviceID:\t%lu\n"
-			"\tprotocolID:\t%lu\n"
-			"\tflags:\t\t%08lX\n"
-			"\tbaud:\t\t%lu\n"
-			, DeviceID, protocolID, flags, baud);
-		writelog(log_msg);
-	}
-
-	if ((uint8_t)DeviceID != con->device_id)
-	{
-		snprintf(LAST_ERROR, LE_LEN, "Error: Invalid DeviceID");
-		return J2534_ERR_INVALID_DEVICE_ID;
-	}
-
-	switch ((int)protocolID) {
-	case 3:
-		con->channel = ISO9141;
-		break;
-	case 4:
-		con->channel = ISO14230;
-		break;
-	case 5:
-		con->channel = CAN;
-		break;
-	case 6:
-		con->channel = ISO15765;
-		break;
-	default:
-		return J2534_ERR_INVALID_PROTOCOL_ID;
-	}
-
-	int r = J2534_NOERROR;
-	uint8_t data[MAX_LEN];
-	snprintf(data, MAX_LEN, "ato%lu %lu %lu 0\r\n", protocolID, flags, baud);
-	r = usb_send_expect(data, strlen(data), MAX_LEN, 2000, NULL);
-	*pChannelID = protocolID;
-	con->protocol_id = protocolID;
-	if (write_log && r == LIBUSB_SUCCESS)
-		writelog("Connected\n");
-	return error_map(r);
+    if(!pChannelID)return J2534_ERR_NULL_PARAMETER;
+    if(!usb_device_open || DeviceID!=con->device_id)return J2534_ERR_INVALID_DEVICE_ID;
+    if(con->protocol_id)return J2534_ERR_CHANNEL_IN_USE;
+    if(protocolID<3 || protocolID>6)return J2534_ERR_INVALID_PROTOCOL_ID;
+    uint8_t data[MAX_LEN];snprintf((char *)data,sizeof(data),"ato%lu %lu %lu 0\r\n",protocolID,flags,baud);
+    int r=usb_send_expect(data,strlen((char *)data),sizeof(data),2000,NULL);
+    if(r){receive_fault=J2534_ERR_FAILED;return error_map(r);}
+    reset_receive();con->channel=(int8_t)(0x30+protocolID);con->protocol_id=protocolID;
+    *pChannelID=protocolID;return J2534_NOERROR;
 }
 
 /*
@@ -787,7 +619,7 @@ int32_t PassThruDisconnect(const unsigned long ChannelID)
 		writelog(log_msg);
 	}
 
-	if (ChannelID != strtoul(&con->channel, NULL, 10))
+	if (!usb_device_open || !con->protocol_id || ChannelID != con->protocol_id)
 	{
 		snprintf(LAST_ERROR, LE_LEN, "Error: Invalid ChannelID");
 		return J2534_ERR_INVALID_CHANNEL_ID;
@@ -797,469 +629,80 @@ int32_t PassThruDisconnect(const unsigned long ChannelID)
 	flush_queue();
 
 	uint8_t data[MAX_LEN];
+	receive_fault=0;wire_used=0;assembling_active=0;
 	snprintf(data, MAX_LEN, "atc%lu\r\n", ChannelID);
 	int r = usb_send_expect(data, strlen(data), MAX_LEN, 2000, NULL);
 
 	if (write_log && r == LIBUSB_SUCCESS)
 		writelog("Disconnected\n");
+    if(!r){reset_receive();con->protocol_id=0;con->channel=0;}
 	return error_map(r);
 }
 
 /*
   Read message(s) from a protocol channel.
  */
-int32_t PassThruReadMsgs(const unsigned long ChannelID, PASSTHRU_MSG *pMsg,
-	unsigned long *pNumMsgs, const unsigned long Timeout)
+int32_t PassThruReadMsgs(const unsigned long ChannelID,PASSTHRU_MSG *pMsg,
+    unsigned long *pNumMsgs,const unsigned long Timeout)
 {
-	if (pMsg == NULL)
-	{
-		snprintf(LAST_ERROR, LE_LEN, "Error: *pMsg must not be NULL");
-		return J2534_ERR_NULL_PARAMETER;
-	}
-
-	if (ChannelID != strtoul(&con->channel, NULL, 10))
-	{
-		snprintf(LAST_ERROR, LE_LEN, "Error: Invalid ChannelID");
-		return J2534_ERR_INVALID_CHANNEL_ID;
-	}
-
-	int8_t channel = con->channel;
-	uint32_t timeout = Timeout;
-	unsigned long msg_cnt = *pNumMsgs;	// number of msgs to read into pMsg array
-	rx_buf_idx = 0;
-
-	if (write_log)
-	{
-		snprintf(log_msg, LM_LEN,
-			"ReadMsgs\n\t|\n"
-			"\tChannelID:\t%lu\n"
-			"\tpNumMsgs:\t%lu\n"
-			"\tTimeout:\t%u msec\n"
-			"\trxBufIndex:\t%lu\n",
-			ChannelID, msg_cnt, timeout, rx_buf_idx);
-		writelog(log_msg);
-	}
-
-	*pNumMsgs = 0;
-	PASSTHRU_MSG *msgBuf = pMsg;	// local copy for pointer arithmetic
-
-	// Any messages in the FIFO queue to send?
-	for (; msg_cnt; msg_cnt--)
-	{
-		if (read_queue_msg(msgBuf))
-		{
-			(*pNumMsgs)++;	// count the dequeued message
-			msgBuf++;		// increment to next PT Msg
-		}
-		else
-			break;
-	}
-
-	if (!msg_cnt)
-	{
-		if (write_log)
-		{
-			snprintf(log_msg, LM_LEN, "\tRX Buffers remaining:\t%lu\nEndReadMsg\n", msg_cnt);
-			writelog(log_msg);
-		}
-		return J2534_NOERROR;
-	}
-
-	int bytes_read = 0, r = LIBUSB_SUCCESS;
-	if (rx_buf_idx < msg_cnt)	// if pMsg array is not full, read from USB
-	{
-		uint8_t data[PM_DATA_LEN];
-		int dontexit = TRUE;
-		msgBuf->DataSize = 0;	// Initialize msg datasize
-
-		while (dontexit)
-		{
-			//dontexit--;
-			// Try to read USB
-			r = libusb_bulk_transfer(con->dev_handle, endpoint->addr_in,
-				data, PM_DATA_LEN, &bytes_read, timeout);
-
-			if (r != LIBUSB_SUCCESS)
-			{
-				if (write_log)
-				{
-					snprintf(log_msg, LM_LEN, "\tRead Error: %s\n", libusb_error_name(r));
-					writelog(log_msg);
-				}
-				snprintf(LAST_ERROR, LE_LEN, "USB data transfer error: %s", libusb_error_name(r));
-				return error_map(r);
-			}
-
-			uint32_t pos = 5;	// index within "data" array to start a copy from
-			uint32_t len = 3;	// index of the packet length for the current message in the "data" array
-			int bytes_processed = 0;	// the number of bytes processed in the "data" array
-			if (write_log)
-			{
-				snprintf(log_msg, LM_LEN,
-					"\t\t*** USB READ: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, USB:%s\n\t\t",
-					pos, len, bytes_processed, bytes_read, libusb_error_name(r));
-				writelog(log_msg);
-				writelogmsg(data, 0, bytes_read);
-				writelog("\n");
-			}
-
-			if (bytes_read > 0 && bytes_read <= PM_DATA_LEN)
-			{
-				if (write_log)
-				{
-					snprintf(log_msg, LM_LEN,
-						"\t\t=== %02X | %02X | %02X <> %02X | %02X ===\n",
-						(uint8_t)data[0], (uint8_t)data[1],
-						(uint8_t)data[2], (uint8_t)data[3],
-						(uint8_t)data[4]);
-					writelog(log_msg);
-				}
-
-				// Process an expected data packet
-				while (bytes_processed < bytes_read
-					&& data[bytes_processed + 0] == 0x61		// A
-					&& data[bytes_processed + 1] == 0x72		// R
-					&& (data[bytes_processed + 2] == channel
-						|| data[bytes_processed + 2] == 0x6F))	// O
-				{
-					// If third byte equals the channel #, then this is Message data
-					if (data[bytes_processed + 2] == channel)
-					{
-						uint8_t channel_id = data[bytes_processed + 2];
-						uint8_t packet_type = data[bytes_processed + 4];
-						int8_t *msg_type = "";
-						unsigned long dataSize = 0;
-
-						// Message Type check
-						// TxDone Msg 0x10
-						if (packet_type == TX_DONE)
-						{
-							msgBuf->Timestamp = parse_ts(data + pos);
-							if (channel_id == ISO15765)	// CAN message
-							{
-								datacopy(msgBuf, data, 4, pos, (data[len] - 1));
-								dataSize = msgBuf->DataSize + (data[len] - 5);
-								msgBuf->DataSize = dataSize;
-								msgBuf->ExtraDataIndex = 0;
-								msgBuf->RxStatus = 8;	// TX Done
-							}
-							msgBuf->ProtocolID = con->protocol_id;
-							msgBuf->TxFlags = 0;
-
-							bytes_processed = bytes_processed + data[len] + 4;
-							pos = bytes_processed + 5;
-							len = bytes_processed + 3;
-							if (write_log)
-							{
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- PROCESSED TX Done: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, ts:%08lX, msg_cnt:%lu\n",
-									pos, len, bytes_processed, bytes_read, msgBuf->Timestamp, rx_buf_idx + 1);
-								writelog(log_msg);
-							}
-							rx_buf_idx++;
-							if (rx_buf_idx < msg_cnt)
-							{
-								msgBuf++;
-								msgBuf->DataSize = 0;	// Initialize new msg datasize
-							}
-							dontexit = FALSE;
-						}
-
-						// Start of a TX LB Msg 0xA0 or Normal Msg 0x80 Indication
-						else if (packet_type == TX_LB_START_IND || packet_type == NORM_MSG_START_IND)
-						{
-							msgBuf->Timestamp = parse_ts(data + pos);
-							if (channel_id == CAN || channel_id == ISO15765)	// CAN message
-							{
-								datacopy(msgBuf, data, 4, pos, (data[len] - 1));
-								dataSize = msgBuf->DataSize + (data[len] - 5);
-								msgBuf->DataSize = dataSize;
-								msgBuf->ExtraDataIndex = 0;
-								msgBuf->RxStatus = 2;	// Msg start indication
-							}
-							if (channel_id == ISO9141 || channel_id == ISO14230)	// K-line message
-							{
-								msgBuf->DataSize = 0;
-								msgBuf->ExtraDataIndex = 0;
-								msgBuf->RxStatus = 2;	// Msg start indication
-							}
-							msgBuf->ProtocolID = con->protocol_id;
-							msgBuf->TxFlags = 0;
-
-							bytes_processed = bytes_processed + data[len] + 4;
-							pos = bytes_processed + 5;
-							len = bytes_processed + 3;
-							if (write_log)
-							{
-								if (packet_type == TX_LB_START_IND)
-									msg_type = "TX LB";
-								if (packet_type == NORM_MSG_START_IND)
-									msg_type = "RX";
-
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- PROCESSED %s Msg INDICATION: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, ts:%08lX, msg_cnt:%lu\n",
-									msg_type, pos, len, bytes_processed, bytes_read, msgBuf->Timestamp, rx_buf_idx+1);
-								writelog(log_msg);
-							}
-							rx_buf_idx++;
-							if (rx_buf_idx < msg_cnt)
-							{
-								msgBuf++;
-								msgBuf->DataSize = 0;	// Initialize new msg datasize
-							}
-							dontexit = FALSE;
-						}
-
-						// TX LB 0x20 or Normal 0x00 Message
-						else if (packet_type == TX_LB_MSG || packet_type == NORM_MSG)
-						{
-							msgBuf->RxStatus = 0;		// normal msg status
-							if (packet_type == TX_LB_MSG)
-								msgBuf->RxStatus = 1;	// TX Loopback msg status
-
-							if (channel_id == CAN || channel_id == ISO15765)	// CAN message
-							{
-								msgBuf->Timestamp = parse_ts(data + pos);
-								datacopy(msgBuf, data, 4, pos, (data[len] - 1));
-								dataSize = msgBuf->DataSize + (data[len] - 5);
-								msgBuf->DataSize = dataSize;
-								msgBuf->ExtraDataIndex = dataSize;
-							}
-							if (channel_id == ISO9141 || channel_id == ISO14230)	// K-line message
-							{
-								datacopy(msgBuf, data, 0, pos, (data[len] - 1));
-								dataSize = msgBuf->DataSize + (data[len] - 1);
-								msgBuf->DataSize = dataSize;
-								msgBuf->ExtraDataIndex = dataSize;
-							}
-							msgBuf->ProtocolID = con->protocol_id;
-							msgBuf->TxFlags = 0;
-							bytes_processed = bytes_processed + data[len] + 4;
-							pos = bytes_processed + 5;
-							len = bytes_processed + 3;
-							if (write_log)
-							{
-								if (packet_type == TX_LB_MSG)
-									msg_type = "LB";
-								if (packet_type == NORM_MSG)
-									msg_type = "RX";
-
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- READ %s Msg: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, DataSize:%lu, msg_cnt:%lu\n",
-									msg_type, pos, len, bytes_processed, bytes_read, dataSize, rx_buf_idx+1);
-								writelog(log_msg);
-							}
-							if (channel_id == CAN)	// CAN message
-							{
-								rx_buf_idx++;
-								if (rx_buf_idx < msg_cnt)
-								{
-									msgBuf++;
-									msgBuf->DataSize = 0;	// Initialize new msg datasize
-								}
-								dontexit = FALSE;
-							}
-							else
-								dontexit = TRUE;	// Read next message to get End indication and timestamp
-						}
-
-						// End of RX 0x40, ExtAddr RX 0x44 or LB 0x60 Msg End Indication
-						else if (packet_type == RX_MSG_END_IND || packet_type == EXT_ADDR_MSG_END_IND || packet_type == LB_MSG_END_IND)
-						{
-							if (write_log)
-							{
-								if (packet_type == RX_MSG_END_IND)
-									msg_type = "RX";
-								if (packet_type == EXT_ADDR_MSG_END_IND)
-									msg_type = "Ext Addr RX";
-								if (packet_type == LB_MSG_END_IND)
-									msg_type = "LB";
-
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- %s Msg END INDICATION: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d\n",
-									msg_type, pos, len, bytes_processed, bytes_read);
-								writelog(log_msg);
-							}
-							msgBuf->Timestamp = parse_ts(data + pos);
-							if (channel_id == CAN || channel_id == ISO15765)	// CAN message
-							{
-								datacopy(msgBuf, data, 4, pos, (data[len] - 1));
-								dataSize = msgBuf->DataSize + (data[len] - 5);
-								msgBuf->DataSize = dataSize;
-								msgBuf->ExtraDataIndex = dataSize;
-								msgBuf->RxStatus = 0;	// RX Indication
-							}
-							bytes_processed = bytes_processed + data[len] + 4;
-							pos = bytes_processed + 5;
-							len = bytes_processed + 3;
-							if (write_log)
-							{
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- PROCESSED %s END INDICATION: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, ts:%08lX, msg_cnt:%lu\n",
-									msg_type, pos, len, bytes_processed, bytes_read, msgBuf->Timestamp, rx_buf_idx+1);
-								writelog(log_msg);
-							}
-							rx_buf_idx++;
-							if (rx_buf_idx < msg_cnt)
-							{
-								msgBuf++;
-								msgBuf->DataSize = 0;	// Initialize new msg datasize
-							}
-							dontexit = FALSE;
-						}
-						else
-						{
-							if (write_log)
-							{
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- Unprocessed data length (data[len] = %02X)\n\t\t\t  ",
-									data[len]);
-								writelog(log_msg);
-								writelogmsg(data, bytes_processed + 5, bytes_read - bytes_processed);
-								writelog("\n");
-							}
-							bytes_processed = bytes_processed + data[len] + 4;
-							pos = bytes_processed + 5;
-							len = bytes_processed + 3;
-							if (write_log)
-							{
-								snprintf(log_msg, LM_LEN,
-									"\t\t\t-- DEFAULT: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, msg_cnt:%lu\n",
-									pos, len, bytes_processed, bytes_read, rx_buf_idx);
-								writelog(log_msg);
-							}
-						} // End of message type check
-					}	// End of the AR channel# packet
-
-					// If third byte equals 'O', then this is Acknowledgement data
-					if (data[bytes_processed + 2] == 0x6F)	// O
-					{
-						bytes_processed = bytes_processed + 5;
-						pos = bytes_processed + 5;
-						len = bytes_processed + 3;
-						if (write_log)
-						{
-							snprintf(log_msg, LM_LEN,
-								"\t\t\t-- ARO Msg: pos:%u, len:%u, bytes_processed:%d, bytes_read:%d, msg_cnt:%lu\n",
-								pos, len, bytes_processed, bytes_read, rx_buf_idx);
-							writelog(log_msg);
-						}
-					}
-
-					// Check if we have read msg_cnt messages,
-					// if so, pMsg array is full, try to queue the message
-					if (bytes_processed < bytes_read && rx_buf_idx >= msg_cnt)
-					{
-						if (write_log)
-						{
-							snprintf(log_msg, LM_LEN, "\tRead message array full, %d bytes remaining\n",
-								bytes_read - bytes_processed);
-							writelog(log_msg);
-						}
-
-						// Try to queue the remaining bytes into new PT messages
-						msgBuf = (PASSTHRU_MSG*)malloc(sizeof(PASSTHRU_MSG));
-						if (msgBuf)
-						{
-							msgBuf->DataSize = 0;	// Initialize new msg datasize
-							if (write_log)
-								writelog("\tMore data, let's queue it\n");
-							if (queue_msg(msgBuf))
-								rx_buf_idx--;	// message queued so don't count it
-							else
-							{
-								// couldn't allocate memory in queue, skip remaining bytes and free msgBuf
-								bytes_processed = bytes_read;
-								dontexit = FALSE;
-								free(msgBuf);
-							}
-						}
-						else
-						{
-							// couldn't allocate memory, skip remaining bytes
-							bytes_processed = bytes_read;
-							dontexit = FALSE;
-						}
-					}	// End of data packet type processing
-				}	// End of bytes to process
-			}	// End of bytes read
-		}	// End of dontexit
-	}	// End of read msg_cnt messages
-
-	// add dequeued msg count to USB read message count
-	*pNumMsgs += rx_buf_idx;
-	if (write_log)
-	{
-		uint32_t i = 0;
-		for (; i < *pNumMsgs; i++)
-		{
-			writelogpassthrumsg(pMsg + i);
-		}
-		snprintf(log_msg, LM_LEN, "\tRX Buffers remaining:\t%lu\nEndReadMsg\n",
-			msg_cnt - rx_buf_idx);
-		writelog(log_msg);
-	}
-	if (rx_buf_idx > msg_cnt)
-	{
-		return J2534_ERR_BUFFER_OVERFLOW;
-	}
-	return J2534_NOERROR;
+    if(!pNumMsgs)return J2534_ERR_NULL_PARAMETER;
+    unsigned long requested=*pNumMsgs;*pNumMsgs=0;
+    if(!pMsg)return J2534_ERR_NULL_PARAMETER;
+    if(!usb_device_open || !con->protocol_id || ChannelID!=con->protocol_id)return J2534_ERR_INVALID_CHANNEL_ID;
+    if(receive_fault)return receive_fault;
+    if(!requested)return J2534_NOERROR;
+    uint64_t deadline=lifecycle_clock_ms()+(Timeout?Timeout:1);
+    int r=LIBUSB_SUCCESS;
+    for(;;) {
+        while(*pNumMsgs<requested && pop_message(pMsg+*pNumMsgs))++*pNumMsgs;
+        if(*pNumMsgs==requested)return J2534_NOERROR;
+        unsigned int wait=remaining_ms(deadline);if(!wait)break;
+        r=receive_usb(wait);
+        if(r && r!=LIBUSB_ERROR_TIMEOUT)return error_map(r);
+        if(r==LIBUSB_ERROR_TIMEOUT) {
+            while(*pNumMsgs<requested && pop_message(pMsg+*pNumMsgs))++*pNumMsgs;
+            if(*pNumMsgs==requested)return J2534_NOERROR;
+            break;
+        }
+    }
+    if(Timeout && (wire_used || assembling_active || awaiting_response))
+        stream_failure(J2534_ERR_FAILED,"Receive deadline left request/record incomplete");
+    if(write_log)for(unsigned long i=0;i<*pNumMsgs;++i)writelogpassthrumsg(pMsg+i);
+    return Timeout?J2534_ERR_TIMEOUT:J2534_ERR_BUFFER_EMPTY;
 }
 
 /*
   Write message(s) to a protocol channel.
  */
-int32_t PassThruWriteMsgs(const unsigned long ChannelID, const PASSTHRU_MSG *pMsg,
-	unsigned long *pNumMsgs, const unsigned long timeInterval)
+int32_t PassThruWriteMsgs(const unsigned long ChannelID,const PASSTHRU_MSG *pMsg,
+    unsigned long *pNumMsgs,const unsigned long Timeout)
 {
-	if (write_log)
-	{
-		snprintf(log_msg, LM_LEN,
-			"WriteMsgs\n\t|\n"
-			"\tChannelID:\t%lu\n"
-			"\tpNumMsgs:\t%lu\n"
-			"\tTimeout:\t%lu msec\n",
-			ChannelID, *pNumMsgs, timeInterval);
-		writelog(log_msg);
-		writelogpassthrumsg(pMsg);
-	}
-
-	unsigned long msg_cnt = *pNumMsgs, i = 0, msg_data_size = 0;
-	int r = LIBUSB_SUCCESS;
-	uint8_t data[PM_DATA_LEN];
-	size_t strln = 0;
-	*pNumMsgs = 0;
-
-	while (i < msg_cnt)
-	{
-		msg_data_size = pMsg[i].DataSize;
-
-		if (msg_data_size > 0 && msg_data_size <= PM_DATA_LEN)
-		{
-			snprintf(data, PM_DATA_LEN, "att%lu %lu %lu\r\n", ChannelID, pMsg[i].DataSize, pMsg[i].TxFlags);
-
-			strln = strlen(data);
-			uint32_t j = 0;
-			while (j < msg_data_size)
-				data[strln++] = pMsg[i].Data[j++];
-
-			r = usb_send_expect(data, strln, PM_DATA_LEN, 0, NULL);
-		}
-		else
-		{
-			if (write_log)
-			{
-				snprintf(log_msg, LM_LEN, "\tInvalid message size: %lu\n", msg_data_size);
-				writelog(log_msg);
-			}
-			snprintf(LAST_ERROR, LE_LEN, "Invalid message size: %lu", msg_data_size);
-			return J2534_ERR_INVALID_MSG;
-		}
-		*pNumMsgs = ++i;
-	}
-	if (write_log)
-		writelog("EndWriteMsgs\n");
-	return error_map(r);
+    if(!pNumMsgs)return J2534_ERR_NULL_PARAMETER;
+    unsigned long requested=*pNumMsgs;*pNumMsgs=0;
+    if(!pMsg)return J2534_ERR_NULL_PARAMETER;
+    if(!usb_device_open || !con->protocol_id || ChannelID!=con->protocol_id)return J2534_ERR_INVALID_CHANNEL_ID;
+    if(receive_fault)return receive_fault;
+    uint64_t deadline=lifecycle_clock_ms()+(Timeout?Timeout:1);
+    for(unsigned long i=0;i<requested;++i) {
+        if(!pMsg[i].DataSize || pMsg[i].DataSize>PM_DATA_LEN ||
+           (pMsg[i].ProtocolID && pMsg[i].ProtocolID!=con->protocol_id))return J2534_ERR_INVALID_MSG;
+        if((con->channel==CAN || con->channel==ISO15765) && pMsg[i].DataSize<4)return J2534_ERR_INVALID_MSG;
+        uint8_t data[PM_DATA_LEN+MAX_LEN];
+        int header=snprintf((char *)data,MAX_LEN,"att%lu %lu %lu\r\n",ChannelID,pMsg[i].DataSize,pMsg[i].TxFlags);
+        if(header<0 || header>=MAX_LEN)return J2534_ERR_INVALID_MSG;
+        memcpy(data+header,pMsg[i].Data,pMsg[i].DataSize);
+        unsigned int wait=remaining_ms(deadline);if(!wait)return J2534_ERR_TIMEOUT;
+        int actual=0,total=header+(int)pMsg[i].DataSize;
+        int r=libusb_bulk_transfer(con->dev_handle,endpoint->addr_out,data,total,&actual,wait);
+        if(write_log){writelogpassthrumsg(pMsg+i);writelog("\tUSB stream Sent:\n\t\t");if(actual>0 && actual<=total)writelogmsg(data,0,(unsigned long)actual);writelog("\n");}
+        if(r || actual!=total) {
+            snprintf((char *)LAST_ERROR,LE_LEN,"USB message send failed/short: %d",r);
+            if(actual>0)stream_failure(J2534_ERR_FAILED,"Partial USB transmit; state uncertain");
+            return r?error_map(r):J2534_ERR_FAILED;
+        }
+        ++*pNumMsgs;awaiting_response=1;
+    }
+    return J2534_NOERROR;
 }
 
 /*
@@ -1290,6 +733,14 @@ int32_t PassThruStartMsgFilter(const unsigned long ChannelID, const unsigned lon
 	const PASSTHRU_MSG *pMaskMsg, const PASSTHRU_MSG *pPatternMsg,
 	const PASSTHRU_MSG *pFlowControlMsg, unsigned long *pMsgID)
 {
+    char *token_state=NULL;
+    if(!pMaskMsg || !pPatternMsg || !pMsgID)return J2534_ERR_NULL_PARAMETER;
+    if(!usb_device_open || !con->protocol_id || ChannelID!=con->protocol_id)return J2534_ERR_INVALID_CHANNEL_ID;
+    if(FilterType<1 || FilterType>3)return J2534_ERR_INVALID_FLAGS;
+    if(!pMaskMsg->DataSize || pMaskMsg->DataSize>12 || pPatternMsg->DataSize!=pMaskMsg->DataSize)return J2534_ERR_INVALID_MSG;
+    if(FilterType==3 && (!pFlowControlMsg || pFlowControlMsg->DataSize!=pMaskMsg->DataSize ||
+        pFlowControlMsg->DataSize>12 || pFlowControlMsg->TxFlags!=pMaskMsg->TxFlags))return J2534_ERR_INVALID_MSG;
+
 	if (write_log)
 	{
 		snprintf(log_msg, LM_LEN,
@@ -1341,6 +792,7 @@ int32_t PassThruStartMsgFilter(const unsigned long ChannelID, const unsigned lon
 	snprintf(data, MAX_LEN, "atf%lu %lu %lu %lu\r\n", ChannelID,
 		FilterType, pMaskMsg->TxFlags, pMaskMsg->DataSize);
 
+    if(strlen((char *)data)+pMaskMsg->DataSize+pPatternMsg->DataSize+(pFlowControlMsg?pFlowControlMsg->DataSize:0)>=sizeof(data))return J2534_ERR_INVALID_MSG;
 	// append the mask, pattern and flow control bytes keeping track of the final byte count
 	size_t j = 0;
 	size_t datalen = strlen(data);
@@ -1364,15 +816,16 @@ int32_t PassThruStartMsgFilter(const unsigned long ChannelID, const unsigned lon
 
 	int r = usb_send_expect(data, i, MAX_LEN, 2000, "arf");
 
+	if(r)return error_map(r);
 	int failed = FALSE;
-	int8_t *word = strtok(data, DELIMITERS);
+	int8_t *word = next_token((char *)data,&token_state);
 	if (word)
 	{
-		word = strtok(NULL, DELIMITERS);
+		word = next_token(NULL,&token_state);
 		if (word)
 		{
-			unsigned long lval = strtoul(word, NULL, 10);
-			if (is_valid(lval))
+			unsigned long lval=0;
+            if (parse_decimal(word,&lval))
 				*pMsgID = lval;
 			else
 				failed = TRUE;
@@ -1410,7 +863,7 @@ int32_t PassThruStopMsgFilter(const unsigned long ChannelID, const unsigned long
 	}
 
 	int r = J2534_NOERROR;
-	if (ChannelID != strtoul(&con->channel, NULL, 10))
+	if (!usb_device_open || !con->protocol_id || ChannelID != con->protocol_id)
 	{
 		snprintf(LAST_ERROR, LE_LEN, "Error: Invalid ChannelID");
 		r = J2534_ERR_INVALID_CHANNEL_ID;
@@ -1443,6 +896,8 @@ int32_t PassThruSetProgrammingVoltage(const unsigned long DeviceID,
 int32_t PassThruReadVersion(const unsigned long DeviceID, char *pFirmwareVersion,
 	char *pDllVersion, char *pApiVersion)
 {
+    if(!usb_device_open || DeviceID!=con->device_id)return J2534_ERR_INVALID_DEVICE_ID;
+    char *token_state=NULL;
 	if (pFirmwareVersion == NULL || pDllVersion == NULL
 		|| pApiVersion == NULL)
 	{
@@ -1463,10 +918,11 @@ int32_t PassThruReadVersion(const unsigned long DeviceID, char *pFirmwareVersion
 	int failed = FALSE;
 	if (fw_version[0] != 0)
 	{
-		char *pos = strrchr(fw_version, ':');
+		char firmware_copy[MAX_LEN];memcpy(firmware_copy,fw_version,sizeof(firmware_copy));
+        char *pos = strrchr(firmware_copy, ':');
 		if (pos)
 		{
-			char *word = strtok(pos + 1, DELIMITERS);
+			char *word = next_token(pos + 1,&token_state);
 			if (word)
 				strcpy(pFirmwareVersion, word);
 			else
@@ -1525,6 +981,17 @@ int32_t PassThruGetLastError(char *pErrorDescription)
 int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID,
 	const void *pInput, void *pOutput)
 {
+    char *token_state=NULL;
+    if(!usb_device_open || !con->protocol_id || ChannelID!=con->protocol_id)return J2534_ERR_INVALID_CHANNEL_ID;
+    if((ioctlID==J2534_GET_CONFIG || ioctlID==J2534_SET_CONFIG) &&
+        (!pInput || !((const SCONFIG_LIST *)pInput)->ConfigPtr))return J2534_ERR_NULL_PARAMETER;
+    if(ioctlID==J2534_READ_VBATT && !pOutput)return J2534_ERR_NULL_PARAMETER;
+    if(ioctlID==J2534_GET_CONFIG || ioctlID==J2534_SET_CONFIG) {
+        unsigned long n=((const SCONFIG_LIST *)pInput)->NumOfParams;
+        if(!n)return J2534_NOERROR;
+        if(n>256)return J2534_ERR_EXCEEDED_LIMIT;
+    }
+
 	if (write_log)
 	{
 		snprintf(log_msg, LM_LEN,
@@ -1535,7 +1002,6 @@ int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID
 		writelog(log_msg);
 	}
 	uint8_t data[MAX_LEN];
-	ssize_t bytes_written = 0;
 	size_t strln = 0;
 	uint32_t i = 0, par_cnt = 0, bytes_read = 0;
 	int r = LIBUSB_ERROR_NOT_SUPPORTED;
@@ -1556,56 +1022,16 @@ int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID
 			cfgitem = &inputlist->ConfigPtr[i];
 			snprintf(data, MAX_LEN, "atg%lu %lu\r\n", ChannelID, cfgitem->Parameter);
 			r = usb_send_expect(data, strlen(data), MAX_LEN, 2000, "arg");
+            if(r)goto EXIT_IOCTL;
 
-			if (data[0] == 0x61		// a
-				&& data[1] == 0x72	// r
-				&& data[2] == 0x67)	// g
-			{
-				int8_t *word = strtok(data, DELIMITERS);
-				if (word == NULL)
-				{
-					snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-					r = J2534_ERR_FAILED;
-					goto EXIT_IOCTL;
-				}
+            char *token=next_token((char *)data,&token_state);
+            unsigned long parameter=0,value=0;
+            if(!token || strcmp(token,"arg") || !parse_decimal(next_token(NULL,&token_state),&parameter) ||
+               !parse_decimal(next_token(NULL,&token_state),&value) || next_token(NULL,&token_state) || parameter!=cfgitem->Parameter) {
+                snprintf((char *)LAST_ERROR,LE_LEN,"GET_CONFIG echo/format mismatch");r=J2534_ERR_INVALID_MSG;goto EXIT_IOCTL;
+            }
+            cfgitem->Value=value;
 
-				word = strtok(NULL, DELIMITERS);
-				if (word == NULL)
-				{
-					snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-					r = J2534_ERR_FAILED;
-					goto EXIT_IOCTL;
-				}
-
-				unsigned long lval = strtoul(word, NULL, 10);
-				if (is_valid(lval))
-					cfgitem->Parameter = lval;
-
-				word = strtok(NULL, DELIMITERS);
-				if (word == NULL)
-				{
-					snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-					r = J2534_ERR_FAILED;
-					goto EXIT_IOCTL;
-				}
-
-				lval = strtoul(word, NULL, 10);
-				if (is_valid(lval))
-					cfgitem->Value = lval;
-
-				if (write_log)
-				{
-					snprintf(log_msg, LM_LEN,
-						"\t\tConfigItem(p,v): %02lX, %02lX\n",
-						cfgitem->Parameter, cfgitem->Value);
-					writelog(log_msg);
-				}
-			}
-			else
-			{
-				snprintf(LAST_ERROR, LE_LEN, "Invalid parameter response");
-				return J2534_ERR_INVALID_MSG;
-			}
 		}
 	}
 	if (ioctlID == J2534_SET_CONFIG)
@@ -1632,69 +1058,21 @@ int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID
 				writelog(log_msg);
 			}
 			r = usb_send_expect(data, strlen(data), MAX_LEN, 2000, NULL);
+            if(r)goto EXIT_IOCTL;
 		}
 	}
-	if (ioctlID == J2534_READ_VBATT)
-	{
-		if (write_log)
-			writelog("[READ_VBATT]\n");
-		uint32_t *vBatt = pOutput;
-		uint32_t pin = 16;
-		snprintf(data, MAX_LEN, "atr %u\r\n", pin);
-		r = usb_send_expect(data, strlen(data), MAX_LEN, 2000, "arr ");
+    if(ioctlID==J2534_READ_VBATT) {
+        snprintf((char *)data,MAX_LEN,"atr 16\r\n");
+        r=usb_send_expect(data,strlen((char *)data),MAX_LEN,2000,(const uint8_t *)"arr ");
+        if(r)goto EXIT_IOCTL;
+        char *token=next_token((char *)data,&token_state);unsigned long pin=0,value=0;
+        if(!token || strcmp(token,"arr") || !parse_decimal(next_token(NULL,&token_state),&pin) || pin!=16 ||
+           !parse_decimal(next_token(NULL,&token_state),&value) || next_token(NULL,&token_state) || value>UINT32_MAX) {
+            snprintf((char *)LAST_ERROR,LE_LEN,"READ_VBATT echo/format mismatch");r=J2534_ERR_INVALID_MSG;goto EXIT_IOCTL;
+        }
+        *(uint32_t *)pOutput=(uint32_t)value;
+    }
 
-		int8_t *word = strtok(data, DELIMITERS);
-		if (word == NULL)
-		{
-			snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-			r = J2534_ERR_FAILED;
-			goto EXIT_IOCTL;
-		}
-
-		word = strtok(NULL, DELIMITERS);
-		if (word == NULL)
-		{
-			snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-			r = J2534_ERR_FAILED;
-			goto EXIT_IOCTL;
-		}
-
-		unsigned long lval = strtoul(word, NULL, 10);
-		if (is_valid(lval))
-		{
-			if (pin == lval)
-			{
-				word = strtok(NULL, DELIMITERS);
-				if (word == NULL)
-				{
-					snprintf(LAST_ERROR, LE_LEN, "Error: failed to parse reply");
-					r = J2534_ERR_FAILED;
-					goto EXIT_IOCTL;
-				}
-
-				lval = strtoul(word, NULL, 10);
-				if (is_valid(lval))
-					*vBatt = lval;
-				else
-				{
-					r = J2534_ERR_FAILED;
-					goto EXIT_IOCTL;
-				}
-			}
-		}
-		else
-		{
-			r = J2534_ERR_FAILED;
-			goto EXIT_IOCTL;
-		}
-
-		if (write_log)
-		{
-			snprintf(log_msg, LM_LEN,
-				"\t\tPin 16 Voltage:\t%umV\n", *vBatt);
-			writelog(log_msg);
-		}
-	}
 	if (ioctlID == J2534_FAST_INIT)
 	{
 		if (pInput == NULL || pOutput == NULL)
@@ -1741,7 +1119,8 @@ int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID
 
 			PASSTHRU_MSG *pOutMsg = pOutput;
 			pOutMsg->DataSize = 0;
-			datacopy(pOutMsg, data, 0, 0, len);
+			if(len>bytes_read || len>MAX_LEN || len>PM_DATA_LEN){r=J2534_ERR_INVALID_MSG;goto EXIT_IOCTL;}
+            memcpy(pOutMsg->Data,data,len);
 			pOutMsg->DataSize = len;
 			pOutMsg->ExtraDataIndex = len;
 			pOutMsg->RxStatus = 0;
@@ -1765,21 +1144,157 @@ int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID
 	{
 		if (write_log)
 			writelog("[CLEAR_TX_BUFFER]\n");
-		r = LIBUSB_SUCCESS;
+		snprintf((char *)LAST_ERROR,LE_LEN,"Adapter TX purge is not implemented");
+        r = LIBUSB_ERROR_NOT_SUPPORTED;
 	}
 	if (ioctlID == J2534_CLEAR_RX_BUFFER)
 	{
 		if (write_log)
 			writelog("[CLEAR_RX_BUFFER]\n");
 
-		// If any messages in the FIFO queue delete them
-		flush_queue();
+        // A local reset is not an adapter purge. Drain bytes without publishing
+        // them, bound waiting, and retain faults that require reconnection.
+        if(receive_fault){r=receive_fault;goto EXIT_IOCTL;}
+        if(awaiting_response || assembling_active || wire_used) {
+            r=stream_failure(J2534_ERR_FAILED,"Cannot purge an unfinished request");goto EXIT_IOCTL;
+        }
+        reset_receive();
+        uint64_t deadline=lifecycle_clock_ms()+100;
+        uint8_t discard[PM_DATA_LEN];int actual=0;
+        do {
+            r=libusb_bulk_transfer(con->dev_handle,endpoint->addr_in,discard,sizeof(discard),&actual,remaining_ms(deadline)?remaining_ms(deadline):1);
+            if(r==LIBUSB_ERROR_TIMEOUT && actual==0){r=LIBUSB_SUCCESS;break;}
+            if(r && r!=LIBUSB_ERROR_TIMEOUT)break;
+            r=LIBUSB_ERROR_TIMEOUT;
+        }while(remaining_ms(deadline));
+        if(r)stream_failure(J2534_ERR_FAILED,"Receive purge did not reach a quiet boundary");
 
-		r = LIBUSB_SUCCESS;
 	}
 
 	EXIT_IOCTL:
 	if (write_log)
 		writelog("EndIoctl\n");
 	return error_map(r);
+}
+
+#undef PassThruOpen
+#undef PassThruClose
+#undef PassThruConnect
+#undef PassThruDisconnect
+#undef PassThruReadMsgs
+#undef PassThruWriteMsgs
+#undef PassThruStartPeriodicMsg
+#undef PassThruStopPeriodicMsg
+#undef PassThruStartMsgFilter
+#undef PassThruStopMsgFilter
+#undef PassThruSetProgrammingVoltage
+#undef PassThruReadVersion
+#undef PassThruGetLastError
+#undef PassThruIoctl
+static unsigned char api_busy;
+int32_t PassThruOpen(const void *pName, unsigned long *pDeviceID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruOpen(pName,pDeviceID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruClose(const unsigned long DeviceID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruClose(DeviceID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruConnect(const unsigned long DeviceID,const unsigned long protocolID,
+    const unsigned long flags,const unsigned long baud,unsigned long *pChannelID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruConnect(DeviceID,protocolID,flags,baud,pChannelID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruDisconnect(const unsigned long ChannelID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruDisconnect(ChannelID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruReadMsgs(const unsigned long ChannelID,PASSTHRU_MSG *pMsg,
+    unsigned long *pNumMsgs,const unsigned long Timeout) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        if(pNumMsgs)*pNumMsgs=0;
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruReadMsgs(ChannelID,pMsg,pNumMsgs,Timeout);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruWriteMsgs(const unsigned long ChannelID,const PASSTHRU_MSG *pMsg,
+    unsigned long *pNumMsgs,const unsigned long Timeout) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        if(pNumMsgs)*pNumMsgs=0;
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruWriteMsgs(ChannelID,pMsg,pNumMsgs,Timeout);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruStartPeriodicMsg(const unsigned long ChannelID, const PASSTHRU_MSG *pMsg,
+	const unsigned long *pMsgID, const unsigned long timeInterval) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruStartPeriodicMsg(ChannelID,pMsg,pMsgID,timeInterval);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruStopPeriodicMsg(const unsigned long ChannelID, const unsigned long msgID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruStopPeriodicMsg(ChannelID,msgID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruStartMsgFilter(const unsigned long ChannelID, const unsigned long FilterType,
+	const PASSTHRU_MSG *pMaskMsg, const PASSTHRU_MSG *pPatternMsg,
+	const PASSTHRU_MSG *pFlowControlMsg, unsigned long *pMsgID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruStartMsgFilter(ChannelID,FilterType,pMaskMsg,pPatternMsg,pFlowControlMsg,pMsgID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruStopMsgFilter(const unsigned long ChannelID, const unsigned long msgID) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruStopMsgFilter(ChannelID,msgID);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruSetProgrammingVoltage(const unsigned long DeviceID,
+	const unsigned long pinNumber, const unsigned long voltage) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruSetProgrammingVoltage(DeviceID,pinNumber,voltage);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruReadVersion(const unsigned long DeviceID, char *pFirmwareVersion,
+	char *pDllVersion, char *pApiVersion) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruReadVersion(DeviceID,pFirmwareVersion,pDllVersion,pApiVersion);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
+}
+int32_t PassThruGetLastError(char *pErrorDescription) {
+    if(!pErrorDescription)return J2534_ERR_NULL_PARAMETER;
+    snprintf(pErrorDescription,LE_LEN,"%s",LAST_ERROR);return J2534_NOERROR;
+}
+int32_t PassThruIoctl(const unsigned long ChannelID, const unsigned long ioctlID,
+	const void *pInput, void *pOutput) {
+    if(__atomic_test_and_set(&api_busy,__ATOMIC_ACQUIRE)) {
+        snprintf((char *)LAST_ERROR,LE_LEN,"Concurrent J2534 operation refused");return J2534_ERR_DEVICE_IN_USE;
+    }
+    int32_t result=impl_PassThruIoctl(ChannelID,ioctlID,pInput,pOutput);
+    __atomic_clear(&api_busy,__ATOMIC_RELEASE);return result;
 }

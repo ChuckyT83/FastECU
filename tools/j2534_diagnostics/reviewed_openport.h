@@ -12,7 +12,7 @@ inline QString reviewedOpenPortHash() {
 #ifdef FASTECU_REVIEWED_OPENPORT_SHA256
     return QStringLiteral(FASTECU_REVIEWED_OPENPORT_SHA256);
 #else
-    return QStringLiteral("d9a0f009a1eea6f5a6957b341880c6c68942c80dc946dfe8eb76c84c5ab4a554");
+    return QStringLiteral("1e8afdfa901319543991539fb99f84f996a34f2eb1b9eb881f7511f0015ea7c6");
 #endif
 }
 inline QString reviewedLibusbHash() {
